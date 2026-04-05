@@ -1,7 +1,7 @@
 {
   "name": "miscuentas-bot-telegram",
   "version": "1.0.0",
-  "description": "Bot de Telegram para MisCuentas Contable",
+  "description": "Bot de Telegram para MisCuentas Contable con lenguaje natural via Groq",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
