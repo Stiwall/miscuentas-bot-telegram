@@ -11,7 +11,6 @@ const GROQ_MODEL = 'llama-3.1-8b-instant';
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
 // ==================== SESSION STORE ====================
-// userSessions[chatId] = { token, userId, state, context }
 const userSessions = {};
 
 function getSession(chatId) {
@@ -79,13 +78,70 @@ const CANCEL_KEYBOARD = {
   })
 };
 
+// ==================== HELPERS: JOURNAL ====================
+async function createSaleJournalEntry(invoice, chatId) {
+  // Venta: Débito Caja/Banco/CxC (según método) / Crédito Ingreso por Venta
+  const accountMap = {
+    cash: '1101',       // Caja
+    bank: '1102',       // Banco
+    credit: '1104',     // CxC
+    card: '1105'        // Tarjeta (genérico)
+  };
+
+  const debitAccount = accountMap[invoice.payment_method] || '1101';
+  const creditAccount = '4101'; // Ingreso por Ventas
+
+  const journalData = {
+    date: new Date().toISOString().split('T')[0],
+    description: `Venta factura ${invoice.invoice_number || invoice.id}`,
+    entries: [
+      { account_code: debitAccount, debit: invoice.total, credit: 0, memo: 'Venta' },
+      { account_code: creditAccount, debit: 0, credit: invoice.total, memo: 'Ingreso' }
+    ],
+    reference: invoice.invoice_number || invoice.id
+  };
+
+  return await api('/api/journal', 'POST', journalData, chatId);
+}
+
+async function createExpenseJournalEntry(payable, method, chatId) {
+  // Gasto: Débito Gasto / Crédito Caja/Banco/CxP (según método)
+  const accountMap = {
+    cash: '1101',
+    bank: '1102',
+    credit: '2101',     // CxP
+    card: '1105'
+  };
+
+  const creditAccount = accountMap[method] || '1101';
+
+  // Buscar cuenta de gasto genérica
+  const accounts = await api('/api/accounts', 'GET', null, chatId);
+  let expenseAccount = '6101'; // Gasto general por defecto
+  if (Array.isArray(accounts) && accounts.length > 0) {
+    const found = accounts.find(a => a.code?.startsWith('6'));
+    if (found) expenseAccount = found.code;
+  }
+
+  const journalData = {
+    date: new Date().toISOString().split('T')[0],
+    description: `Gasto: ${payable.description || payable.vendor_name}`,
+    entries: [
+      { account_code: expenseAccount, debit: payable.total, credit: 0, memo: 'Gasto' },
+      { account_code: creditAccount, debit: 0, credit: payable.total, memo: payable.vendor_name }
+    ],
+    reference: payable.id || payable.payable_number
+  };
+
+  return await api('/api/journal', 'POST', journalData, chatId);
+}
+
 // ==================== STATE MACHINE ====================
-// States: null | 'sale_amount' | 'sale_client' | 'sale_payment' | 'expense_amount' | 'expense_vendor' | 'expense_payment'
+// States: null | 'sale_amount' | 'sale_product' | 'sale_client' | 'sale_payment' | 'expense_amount' | 'expense_desc' | 'expense_vendor' | 'expense_payment'
 
 async function handleStateMessage(chatId, text) {
   const s = getSession(chatId);
 
-  // Cancelar cualquier flujo
   if (text === '❌ Cancelar') {
     resetSession(chatId);
     await bot.sendMessage(chatId, '❌ Operación cancelada.', { parse_mode: 'Markdown' });
@@ -102,10 +158,47 @@ async function handleStateMessage(chatId, text) {
         return true;
       }
       s.context.amount = amount;
+      s.state = 'sale_product';
+
+      // Cargar productos
+      await bot.sendMessage(chatId, '⏳ Cargando productos...', { parse_mode: 'Markdown' });
+      const prods = await api('/api/products', 'GET', null, chatId);
+
+      if (Array.isArray(prods) && prods.length > 0) {
+        s.context.products = prods;
+        let msg = '📦 *¿Qué producto vendiste?*\n\n';
+        prods.slice(0, 12).forEach((p, i) => {
+          msg += `${i + 1}. ${p.name}\n`;
+        });
+        msg += '\n_O escribe el nombre del producto_';
+        await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
+      } else {
+        // Sin productos - pedir descripción libre
+        s.context.products = [];
+        await bot.sendMessage(chatId, '📝 *¿Qué producto vendiste?*\n\n(Escribe la descripción)', { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
+      }
+      break;
+    }
+
+    case 'sale_product': {
+      s.context.productName = text.trim();
+
+      // Si escribío un número, buscar por índice
+      const num = parseInt(text);
+      if (num > 0 && s.context.products && s.context.products[num - 1]) {
+        const prod = s.context.products[num - 1];
+        s.context.productName = prod.name;
+        s.context.productId = prod.id;
+        s.context.unitPrice = parseFloat(prod.price || s.context.amount);
+      }
+
       s.state = 'sale_client';
-      await bot.sendMessage(chatId, `💰 Monto: ${fmt(amount)}\n\n🏪 ¿Nombre del cliente?`, {
-        parse_mode: 'Markdown', ...PAYMENT_KEYBOARD
-      });
+      await bot.sendMessage(chatId,
+        `📦 Producto: ${s.context.productName}\n` +
+        `💰 Monto: ${fmt(s.context.amount)}\n\n` +
+        `🏪 *¿Nombre del cliente?*`,
+        { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD }
+      );
       break;
     }
 
@@ -114,8 +207,9 @@ async function handleStateMessage(chatId, text) {
       s.state = 'sale_payment';
       await bot.sendMessage(chatId,
         `👤 Cliente: ${s.context.client}\n` +
+        `📦 Producto: ${s.context.productName}\n` +
         `💰 Monto: ${fmt(s.context.amount)}\n\n` +
-        `💳 ¿Método de pago?`,
+        `💳 *¿Método de pago?*`,
         { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD }
       );
       break;
@@ -133,7 +227,7 @@ async function handleStateMessage(chatId, text) {
 
       await bot.sendMessage(chatId, '⏳ Registrando venta...', { parse_mode: 'Markdown' });
 
-      // 1. Crear cliente si no existe
+      // 1. Crear o buscar cliente
       let clientId = null;
       const clients = await api('/api/clients', 'GET', null, chatId);
       const existingClient = Array.isArray(clients) ? clients.find(c => c.name === s.context.client) : null;
@@ -149,7 +243,8 @@ async function handleStateMessage(chatId, text) {
         client_id: clientId,
         client_name: s.context.client,
         items: [{
-          description: `Venta a ${s.context.client}`,
+          product_id: s.context.productId || null,
+          description: s.context.productName,
           qty: 1,
           price: s.context.amount,
           total: s.context.amount
@@ -163,7 +258,7 @@ async function handleStateMessage(chatId, text) {
 
       const invoice = await api('/api/invoices', 'POST', invoiceData, chatId);
 
-      // 3. Si es CxC, crear receivable
+      // 3. Si CxC → crear receivable
       if (method === 'credit' && clientId) {
         const receivableData = {
           client_id: clientId,
@@ -176,11 +271,15 @@ async function handleStateMessage(chatId, text) {
         await api('/api/receivables', 'POST', receivableData, chatId);
       }
 
+      // 4. Crear asiento contable (journal)
+      await createSaleJournalEntry({ ...invoice, payment_method: method }, chatId);
+
       await bot.sendMessage(chatId,
         `✅ *VENTA REGISTRADA*\n\n` +
+        `📦 ${s.context.productName}\n` +
         `🏪 Cliente: ${s.context.client}\n` +
-        `💰 Monto: ${fmt(s.context.amount)}\n` +
-        `💳 Pago: ${text}\n` +
+        `💰 ${fmt(s.context.amount)}\n` +
+        `💳 ${text}\n` +
         `📄 Factura: ${invoice.invoice_number || invoice.id}`,
         { parse_mode: 'Markdown' }
       );
@@ -197,10 +296,24 @@ async function handleStateMessage(chatId, text) {
         return true;
       }
       s.context.amount = amount;
+      s.state = 'expense_desc';
+      await bot.sendMessage(chatId,
+        `💰 Monto: ${fmt(amount)}\n\n` +
+        `📝 *¿En qué gastaste?* (descripción)`,
+        { parse_mode: 'Markdown', ...CANCEL_KEYBOARD }
+      );
+      break;
+    }
+
+    case 'expense_desc': {
+      s.context.description = text.trim();
       s.state = 'expense_vendor';
-      await bot.sendMessage(chatId, `💰 Monto: ${fmt(amount)}\n\n🏪 ¿Nombre del proveedor o gasto?`, {
-        parse_mode: 'Markdown', ...PAYMENT_KEYBOARD
-      });
+      await bot.sendMessage(chatId,
+        `📝 Descripción: ${s.context.description}\n` +
+        `💰 Monto: ${fmt(s.context.amount)}\n\n` +
+        `🏪 *¿Proveedor?* (nombre o "N/A")`,
+        { parse_mode: 'Markdown', ...CANCEL_KEYBOARD }
+      );
       break;
     }
 
@@ -209,8 +322,9 @@ async function handleStateMessage(chatId, text) {
       s.state = 'expense_payment';
       await bot.sendMessage(chatId,
         `🏪 Proveedor: ${s.context.vendor}\n` +
+        `📝 Descripción: ${s.context.description}\n` +
         `💰 Monto: ${fmt(s.context.amount)}\n\n` +
-        `💳 ¿Método de pago?`,
+        `💳 *¿Método de pago?*`,
         { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD }
       );
       break;
@@ -228,22 +342,24 @@ async function handleStateMessage(chatId, text) {
 
       await bot.sendMessage(chatId, '⏳ Registrando gasto...', { parse_mode: 'Markdown' });
 
-      // 1. Crear vendor si no existe
+      // 1. Crear o buscar vendor
       let vendorId = null;
-      const vendors = await api('/api/vendors', 'GET', null, chatId);
-      const existingVendor = Array.isArray(vendors) ? vendors.find(v => v.name === s.context.vendor) : null;
-      if (existingVendor) {
-        vendorId = existingVendor.id;
-      } else {
-        const newVendor = await api('/api/vendors', 'POST', { name: s.context.vendor }, chatId);
-        vendorId = newVendor.id;
+      if (s.context.vendor !== 'N/A') {
+        const vendors = await api('/api/vendors', 'GET', null, chatId);
+        const existingVendor = Array.isArray(vendors) ? vendors.find(v => v.name === s.context.vendor) : null;
+        if (existingVendor) {
+          vendorId = existingVendor.id;
+        } else {
+          const newVendor = await api('/api/vendors', 'POST', { name: s.context.vendor }, chatId);
+          vendorId = newVendor.id;
+        }
       }
 
       // 2. Crear payable (gasto)
       const payableData = {
         vendor_id: vendorId,
-        vendor_name: s.context.vendor,
-        description: `Gasto: ${s.context.vendor}`,
+        vendor_name: s.context.vendor === 'N/A' ? 'Varios' : s.context.vendor,
+        description: s.context.description,
         total: s.context.amount,
         balance: s.context.amount,
         date: new Date().toISOString().split('T')[0],
@@ -252,14 +368,15 @@ async function handleStateMessage(chatId, text) {
 
       const payable = await api('/api/payables', 'POST', payableData, chatId);
 
-      // 3. Si es CxP, ya está creado — el payable representa la deuda
+      // 3. Crear asiento contable
+      await createExpenseJournalEntry({ ...payable, description: s.context.description }, method, chatId);
 
       await bot.sendMessage(chatId,
         `✅ *GASTO REGISTRADO*\n\n` +
-        `🏪 Proveedor: ${s.context.vendor}\n` +
-        `💰 Monto: ${fmt(s.context.amount)}\n` +
-        `💳 Pago: ${text}\n` +
-        `📄 Referencia: ${payable.id || payable.payable_number || 'N/A'}`,
+        `📝 ${s.context.description}\n` +
+        `🏪 ${s.context.vendor === 'N/A' ? 'Varios' : s.context.vendor}\n` +
+        `💰 ${fmt(s.context.amount)}\n` +
+        `💳 ${text}`,
         { parse_mode: 'Markdown' }
       );
 
@@ -268,14 +385,13 @@ async function handleStateMessage(chatId, text) {
     }
 
     default:
-      return false; // No era mensaje de estado
+      return false;
   }
   return true;
 }
 
 // ==================== COMMAND HANDLERS ====================
 
-// /start
 bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
@@ -284,20 +400,18 @@ bot.onText(/\/start/, async (msg) => {
 
   await bot.sendMessage(chatId,
     `🐷 *MisCuentas Bot*\n\n${connected}\n\n` +
-    `*Comandos disponibles:*\n` +
+    `*Comandos:*\n` +
     `/start - Este mensaje\n` +
     `/login - Iniciar sesión\n` +
     `/balance - Ver balance\n` +
     `/deudas - CxC y CxP\n` +
     `/venta - Registrar venta\n` +
     `/gasto - Registrar gasto\n` +
-    `/productos - Ver productos\n` +
     `/logout - Cerrar sesión`,
     { parse_mode: 'Markdown' }
   );
 });
 
-// /login
 bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
   const chatId = msg.chat.id;
   const [username, password] = [m[1], m[2]];
@@ -313,18 +427,16 @@ bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
   }
 });
 
-// /logout
 bot.onText(/\/logout/, async (msg) => {
   const chatId = msg.chat.id;
   resetSession(chatId);
   await bot.sendMessage(chatId, '👋 *Sesión cerrada*', { parse_mode: 'Markdown' });
 });
 
-// /balance
 bot.onText(/\/balance/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero inicia sesión* /login', { parse_mode: 'Markdown' }); return; }
+  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero inicia sesión*', { parse_mode: 'Markdown' }); return; }
   await bot.sendMessage(chatId, '📊 Cargando...');
   const [b, i] = await Promise.all([api('/api/balance', 'GET', null, chatId), api('/api/income-statement', 'GET', null, chatId)]);
   if (b.error) { await bot.sendMessage(chatId, `❌ ${b.error}`); return; }
@@ -338,7 +450,6 @@ bot.onText(/\/balance/, async (msg) => {
   );
 });
 
-// /deudas
 bot.onText(/\/deudas/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
@@ -355,7 +466,6 @@ bot.onText(/\/deudas/, async (msg) => {
   );
 });
 
-// /productos
 bot.onText(/\/productos/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
@@ -367,7 +477,6 @@ bot.onText(/\/productos/, async (msg) => {
   await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
 });
 
-// /venta — iniciaflujo
 bot.onText(/\/venta/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
@@ -381,7 +490,6 @@ bot.onText(/\/venta/, async (msg) => {
   );
 });
 
-// /gasto — iniciaflujo
 bot.onText(/\/gasto/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
@@ -402,39 +510,31 @@ bot.on('message', async (msg) => {
   const text = msg.text.trim();
   const s = getSession(chatId);
 
-  // Si está en estado conversacional, procesar ahí
   if (s.state) {
     const handled = await handleStateMessage(chatId, text);
     if (handled) return;
   }
 
-  // Sin sesión — solo permitir ayuda
   if (!s.token) {
     await bot.sendMessage(chatId, '❌ *Primero inicia sesión:*\n/login username password', { parse_mode: 'Markdown' });
     return;
   }
 
-  // Detectar intención con Groq
   if (!GROQ_API_KEY) {
     await bot.sendMessage(chatId, 'Usa /venta o /gasto para registrar transacciones.', { parse_mode: 'Markdown' });
     return;
   }
 
-  const prompt = `Interpreta este mensaje de un usuario de contabilidad. Responde SOLO con JSON:
-
+  const prompt = `Interpreta este mensaje. Responde SOLO con JSON:
 {
   "intent": "venta|gasto|balance|deudas|productos|ayuda|desconocido",
   "confidence": 0.0-1.0,
   "response": "respuesta corta en español"
 }
-
 Mensaje: "${text}"
-
 Ejemplos:
 - "registra una venta" → {"intent":"venta","confidence":0.95,"response":"Entendido. ¿Cuál es el monto?"}
-- "un gasto de luz" → {"intent":"gasto","confidence":0.9,"response":"Perfecto. ¿Cuánto gastaste?"}
-- "cuánto me deben" → {"intent":"deudas","confidence":0.9,"response":"Buscando tus cuentas..."}
-- "muestrame el balance" → {"intent":"balance","confidence":0.85,"response":"Obteniendo tu balance..."}`;
+- "un gasto de luz" → {"intent":"gasto","confidence":0.9,"response":"Perfecto. ¿Cuánto gastaste?"}`;
 
   const result = await groqChat(prompt);
   if (!result) {
@@ -471,5 +571,5 @@ Ejemplos:
 bot.on('polling_error', e => console.error('Polling:', e.code, e.message));
 bot.on('error', e => console.error('Bot error:', e));
 
-console.log('🐷 MisCuentas Bot — Conversacional');
+console.log('🐷 MisCuentas Bot — Conversacional + Journal');
 console.log(`📡 ${MISCUENTAS_API}`);
