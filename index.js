@@ -116,26 +116,8 @@ async function processSaleFull(chatId, context) {
     return { success: false, error: invoice.error };
   }
 
-  // 3. Reducir stock vía inventory/exit (CMVe genera asiento pérdida inventario)
-  if (context.productId) {
-    // Obtener costo del producto para el exit
-    const products = await api('/api/products', 'GET', null, chatId);
-    const product = Array.isArray(products) ? products.find(p => p.id === context.productId) : null;
-    const unitCost = product?.cost_price || 0;
-
-    await api('/api/inventory/exit', 'POST', {
-      product_id: context.productId,
-      quantity: 1,
-      unit_price: unitCost,
-      reference: `Factura ${invoice.invoice_number || invoice.id}`,
-      notes: `Venta a ${context.client}`,
-      mov_date: new Date().toISOString().split('T')[0],
-      reason: 'venta'
-    }, chatId);
-  }
-
-  // 4. Si CxC → receivable ya se creó en el backend (status=issued en invoice trigger)
-  // 5. Journal entry ya se creó en backend (status=issued trigger)
+  // NOTA: inventory/exit, journal y CxC ya se hacen automáticamente
+  // en el backend cuando status='issued' (processCMVForInvoice)
 
   return {
     success: true,
