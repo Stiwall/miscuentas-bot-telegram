@@ -32,7 +32,7 @@ async function api(endpoint, method = 'GET', data = null, chatId = null) {
   const headers = {};
   if (s.token) headers['x-session-token'] = s.token;
   try {
-    const r = await axios({ method, url: `${MISCUENTAS_API}${endpoint}`, data, headers, timeout: 12000 });
+    const r = await axios({ method, url: `${MISCUENTAS_API}${endpoint}`, data, headers, timeout: 15000 });
     return r.data;
   } catch (e) {
     return { error: e.response?.data?.error || e.message };
@@ -70,6 +70,29 @@ const PAYMENT_KEYBOARD = {
   })
 };
 
+const YES_NO_KEYBOARD = {
+  reply_markup: JSON.stringify({
+    keyboard: [
+      [{ text: '✅ Sí, agregar otro' }],
+      [{ text: '✅ No, continuar' }],
+      [{ text: '❌ Cancelar' }]
+    ],
+    one_time_keyboard: true,
+    resize_keyboard: true
+  })
+};
+
+const CONFIRM_KEYBOARD = {
+  reply_markup: JSON.stringify({
+    keyboard: [
+      [{ text: '✅ Confirmar' }],
+      [{ text: '❌ Cancelar' }]
+    ],
+    one_time_keyboard: true,
+    resize_keyboard: true
+  })
+};
+
 const CANCEL_KEYBOARD = {
   reply_markup: JSON.stringify({
     keyboard: [[{ text: '❌ Cancelar' }]],
@@ -78,9 +101,297 @@ const CANCEL_KEYBOARD = {
   })
 };
 
-// ==================== SALE FLOW — PROCESO COMPLETO ====================
+const REPORT_MENU_KEYBOARD = {
+  reply_markup: JSON.stringify({
+    keyboard: [
+      [{ text: '📅 Diario' }],
+      [{ text: '📆 Semanal' }],
+      [{ text: '🗓️ Mensual' }],
+      [{ text: '🔒 Cierre de Mes' }],
+      [{ text: '❌ Cancelar' }]
+    ],
+    one_time_keyboard: true,
+    resize_keyboard: true
+  })
+};
+
+// ==================== STATE MACHINE ====================
+// States:
+// null → idle
+// 'sale_client' → ask client name
+// 'sale_product' → ask product
+// 'sale_qty' → ask quantity
+// 'sale_add_more' → ask if add another
+// 'sale_payment' → ask payment method
+// 'sale_confirm' → show summary + confirm
+// 'expense_amount' → ask amount
+// 'expense_desc' → ask description
+// 'expense_vendor' → ask vendor
+// 'expense_payment' → ask payment
+// 'report_type' → report menu selected
+
+async function handleStateMessage(chatId, text) {
+  const s = getSession(chatId);
+
+  if (text === '❌ Cancelar') {
+    resetSession(chatId);
+    await bot.sendMessage(chatId, '❌ Operación cancelada.', { parse_mode: 'Markdown' });
+    return true;
+  }
+
+  switch (s.state) {
+
+    // ==================== SALE FLOW ====================
+    case 'sale_client': {
+      s.context.client = text.trim();
+      s.state = 'sale_product';
+
+      // Load products
+      await bot.sendMessage(chatId, '⏳ Cargando productos...', { parse_mode: 'Markdown' });
+      const prods = await api('/api/products', 'GET', null, chatId);
+
+      if (Array.isArray(prods) && prods.length > 0) {
+        s.context.products = prods;
+        let msg = '📦 *¿Qué producto vendiste?*\n\n';
+        prods.slice(0, 15).forEach((p, i) => {
+          msg += `${i + 1}. ${p.name}\n`;
+        });
+        msg += '\n_O escribe el nombre_';
+        await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
+      } else {
+        s.context.products = [];
+        await bot.sendMessage(chatId, '📝 *¿Qué producto?*\n(Escribe el nombre)', { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
+      }
+      break;
+    }
+
+    case 'sale_product': {
+      const num = parseInt(text);
+      let selectedProduct = null;
+
+      if (num > 0 && s.context.products && s.context.products[num - 1]) {
+        selectedProduct = s.context.products[num - 1];
+      } else {
+        // Search by name
+        const found = s.context.products?.find(p =>
+          p.name.toLowerCase().includes(text.toLowerCase())
+        );
+        selectedProduct = found || {
+          name: text.trim(),
+          id: null,
+          price: s.context.items?.length > 0 ? 0 : null
+        };
+      }
+
+      s.context.pendingProduct = selectedProduct.name;
+      s.context.pendingProductId = selectedProduct.id || null;
+      s.context.pendingProductPrice = parseFloat(selectedProduct.price) || 0;
+      s.state = 'sale_qty';
+
+      await bot.sendMessage(chatId,
+        `📦 *${selectedProduct.name}*\n\n` +
+        `¿Cuántas unidades?`,
+        { parse_mode: 'Markdown', ...CANCEL_KEYBOARD }
+      );
+      break;
+    }
+
+    case 'sale_qty': {
+      const qty = parseInt(text);
+      if (!qty || qty <= 0) {
+        await bot.sendMessage(chatId, '⚠️ Cantidad inválida. Ingresa un número positivo:');
+        return true;
+      }
+
+      // Add item to list
+      if (!s.context.items) s.context.items = [];
+
+      const price = s.context.pendingProductPrice || 0;
+      s.context.items.push({
+        product_id: s.context.pendingProductId,
+        description: s.context.pendingProduct,
+        qty,
+        price,
+        total: qty * price
+      });
+
+      s.state = 'sale_add_more';
+      await bot.sendMessage(chatId,
+        `✅ *Agregado*\n\n` +
+        `${s.context.pendingProduct} x${qty} — ${fmt(qty * price)}\n\n` +
+        `¿Agregar otro producto?`,
+        { parse_mode: 'Markdown', ...YES_NO_KEYBOARD }
+      );
+      break;
+    }
+
+    case 'sale_add_more': {
+      if (text.includes('Sí') || text.includes('sí')) {
+        // Reset pending and go back to product selection
+        s.context.pendingProduct = null;
+        s.context.pendingProductId = null;
+        s.context.pendingProductPrice = 0;
+        s.state = 'sale_product';
+
+        let msg = '📦 *¿Qué otro producto?*\n\n';
+        if (s.context.products?.length > 0) {
+          s.context.products.slice(0, 15).forEach((p, i) => {
+            msg += `${i + 1}. ${p.name}\n`;
+          });
+        }
+        msg += '\n_O escribe el nombre_';
+        await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
+      } else {
+        // Continue to payment
+        s.state = 'sale_payment';
+        await bot.sendMessage(chatId, '💳 *¿Método de pago?*', { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD });
+      }
+      break;
+    }
+
+    case 'sale_payment': {
+      const methodMap = { '💵 Efectivo': 'cash', '📋 CxC': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
+      const method = methodMap[text];
+      if (!method) {
+        await bot.sendMessage(chatId, '⚠️ Selecciona una opción del teclado:', { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD });
+        return true;
+      }
+      s.context.paymentMethod = method;
+
+      // Show summary for confirmation
+      s.state = 'sale_confirm';
+      await sendSaleSummary(chatId, s.context);
+      break;
+    }
+
+    case 'sale_confirm': {
+      if (text === '✅ Confirmar') {
+        await bot.sendMessage(chatId, '⏳ Procesando factura...', { parse_mode: 'Markdown' });
+
+        const result = await processSaleFull(chatId, s.context);
+
+        if (!result.success) {
+          await bot.sendMessage(chatId, `❌ Error: ${result.error}`);
+          resetSession(chatId);
+          return true;
+        }
+
+        await bot.sendMessage(chatId, result.message, { parse_mode: 'Markdown' });
+        resetSession(chatId);
+      } else {
+        await bot.sendMessage(chatId, '❌ Factura cancelada.', { parse_mode: 'Markdown' });
+        resetSession(chatId);
+      }
+      break;
+    }
+
+    // ==================== EXPENSE FLOW ====================
+    case 'expense_amount': {
+      const amount = parseFloat(text.replace(/[^\d.]/g, ''));
+      if (!amount || amount <= 0) {
+        await bot.sendMessage(chatId, '⚠️ Monto inválido:');
+        return true;
+      }
+      s.context.amount = amount;
+      s.state = 'expense_desc';
+      await bot.sendMessage(chatId, `💰 ${fmt(amount)}\n\n📝 *¿Descripción del gasto?*`, { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
+      break;
+    }
+
+    case 'expense_desc': {
+      s.context.description = text.trim();
+      s.state = 'expense_vendor';
+      await bot.sendMessage(chatId, `📝 ${s.context.description}\n\n🏪 *¿Proveedor?* (o "N/A")`, { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
+      break;
+    }
+
+    case 'expense_vendor': {
+      s.context.vendor = text.trim();
+      s.state = 'expense_payment';
+      await bot.sendMessage(chatId,
+        `🏪 ${s.context.vendor}\n` +
+        `📝 ${s.context.description}\n` +
+        `💰 ${fmt(s.context.amount)}\n\n` +
+        `💳 *¿Método de pago?*`,
+        { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD }
+      );
+      break;
+    }
+
+    case 'expense_payment': {
+      const methodMap = { '💵 Efectivo': 'cash', '📋 CxP': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
+      const method = methodMap[text];
+      if (!method) {
+        await bot.sendMessage(chatId, '⚠️ Selecciona una opción:', { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD });
+        return true;
+      }
+      s.context.paymentMethod = method;
+      s.state = null;
+
+      await bot.sendMessage(chatId, '⏳ Registrando gasto...', { parse_mode: 'Markdown' });
+      const result = await processExpenseFull(chatId, s.context);
+
+      if (!result.success) {
+        await bot.sendMessage(chatId, `❌ Error: ${result.error}`);
+        resetSession(chatId);
+        return true;
+      }
+
+      await bot.sendMessage(chatId, result.message, { parse_mode: 'Markdown' });
+      resetSession(chatId);
+      break;
+    }
+
+    // ==================== REPORT FLOW ====================
+    case 'report_type': {
+      const reportMap = {
+        '📅 Diario': 'daily',
+        '📆 Semanal': 'weekly',
+        '🗓️ Mensual': 'monthly',
+        '🔒 Cierre de Mes': 'cierre'
+      };
+      const reportKind = reportMap[text];
+      if (!reportKind) {
+        await bot.sendMessage(chatId, '⚠️ Selecciona una opción:', { parse_mode: 'Markdown', ...REPORT_MENU_KEYBOARD });
+        return true;
+      }
+      s.state = null;
+      await bot.sendMessage(chatId, '⏳ Generando reporte...', { parse_mode: 'Markdown' });
+      await sendReport(chatId, reportKind);
+      resetSession(chatId);
+      break;
+    }
+
+    default:
+      return false;
+  }
+  return true;
+}
+
+// ==================== SALE SUMMARY ====================
+async function sendSaleSummary(chatId, context) {
+  const items = context.items || [];
+  const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+  const methodLabels = { cash: '💵 Efectivo', credit: '📋 CxC', card: '💳 Tarjeta', bank: '🏦 Transferencia' };
+
+  let msg = `📄 *FACTURA*\n\n`;
+  msg += `👤 Cliente: ${context.client}\n\n`;
+
+  items.forEach(item => {
+    msg += `📦 ${item.description} x${item.qty} — ${fmt(item.total)}\n`;
+  });
+
+  msg += `\n─────────────\n`;
+  msg += `💰 *Total: ${fmt(subtotal)}*\n`;
+  msg += `💳 Pago: ${methodLabels[context.paymentMethod] || context.paymentMethod}\n\n`;
+  msg += `_¿Confirmas esta factura?_`;
+
+  await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...CONFIRM_KEYBOARD });
+}
+
+// ==================== PROCESS SALE FULL ====================
 async function processSaleFull(chatId, context) {
-  // 1. Crear cliente si no existe
+  // 1. Crear/buscar cliente
   let clientId = null;
   const clients = await api('/api/clients', 'GET', null, chatId);
   const existingClient = Array.isArray(clients) ? clients.find(c => c.name === context.client) : null;
@@ -91,23 +402,26 @@ async function processSaleFull(chatId, context) {
     clientId = newClient.id;
   }
 
-  // 2. Crear invoice (status: issued — activa todo el proceso contable)
+  // 2. Crear invoice con todos los items
+  const items = context.items || [];
+  const subtotal = items.reduce((sum, item) => sum + item.total, 0);
+
   const invoiceData = {
     client_id: clientId,
     client_name: context.client,
-    items: [{
-      product_id: context.productId || null,
-      description: context.productName,
-      qty: 1,
-      price: context.amount,
-      total: context.amount
-    }],
-    subtotal: context.amount,
+    items: items.map(item => ({
+      product_id: item.product_id || null,
+      description: item.description,
+      qty: item.qty,
+      price: item.price,
+      total: item.total
+    })),
+    subtotal,
     tax: 0,
-    total: context.amount,
+    total: subtotal,
     date: new Date().toISOString().split('T')[0],
     payment_method: context.paymentMethod,
-    status: 'issued'  // ← Clave: activa CxC + journal + CMV automáticamente
+    status: 'issued'
   };
 
   const invoice = await api('/api/invoices', 'POST', invoiceData, chatId);
@@ -116,25 +430,20 @@ async function processSaleFull(chatId, context) {
     return { success: false, error: invoice.error };
   }
 
-  // NOTA: inventory/exit, journal y CxC ya se hacen automáticamente
-  // en el backend cuando status='issued' (processCMVForInvoice)
-
   return {
     success: true,
     invoice,
     message:
-      `✅ *VENTA REGISTRADA*\n\n` +
-      `📦 ${context.productName}\n` +
-      `🏪 Cliente: ${context.client}\n` +
-      `💰 ${fmt(context.amount)}\n` +
-      `💳 ${getPaymentLabel(context.paymentMethod)}\n` +
-      `📄 Factura: ${invoice.invoice_number || invoice.id}`
+      `✅ *FACTURA CREADA*\n\n` +
+      `📄 Factura: ${invoice.invoice_number || invoice.id}\n` +
+      `👤 Cliente: ${context.client}\n` +
+      `💰 Total: ${fmt(subtotal)}\n` +
+      `💳 ${getPaymentLabel(context.paymentMethod)}`
   };
 }
 
-// ==================== EXPENSE FLOW — PROCESO COMPLETO ====================
+// ==================== PROCESS EXPENSE FULL ====================
 async function processExpenseFull(chatId, context) {
-  // 1. Crear vendor si no existe
   let vendorId = null;
   if (context.vendor !== 'N/A') {
     const vendors = await api('/api/vendors', 'GET', null, chatId);
@@ -147,7 +456,6 @@ async function processExpenseFull(chatId, context) {
     }
   }
 
-  // 2. Crear payable (gasto = debt)
   const payableData = {
     vendor_id: vendorId,
     vendor_name: context.vendor === 'N/A' ? 'Varios' : context.vendor,
@@ -165,19 +473,12 @@ async function processExpenseFull(chatId, context) {
     return { success: false, error: payable.error };
   }
 
-  // 3. Journal entry para el gasto (mismo patrón que inventory/exit hace para pérdida)
-  // Débito: Gasto (cuenta clase 6) / Crédito: Caja/Banco/CxP
-  const accountMap = {
-    cash: '1101',
-    bank: '1102',
-    credit: '2101',
-    card: '1105'
-  };
+  // Journal entry
+  const accountMap = { cash: '1101', bank: '1102', credit: '2101', card: '1105' };
   const creditAccount = accountMap[context.paymentMethod] || '1101';
 
-  // Buscar cuenta de gasto (clase 6)
   const accounts = await api('/api/accounts', 'GET', null, chatId);
-  let expenseAccount = '6101'; // Gasto general por defecto
+  let expenseAccount = '6101';
   if (Array.isArray(accounts) && accounts.length > 0) {
     const found = accounts.find(a => a.code?.startsWith('6'));
     if (found) expenseAccount = found.code;
@@ -190,7 +491,7 @@ async function processExpenseFull(chatId, context) {
       { account_code: expenseAccount, debit: context.amount, credit: 0, memo: context.description },
       { account_code: creditAccount, debit: 0, credit: context.amount, memo: context.vendor === 'N/A' ? 'Varios' : context.vendor }
     ],
-    reference: payable.id || payable.payable_number
+    reference: payable.id
   }, chatId);
 
   return {
@@ -206,188 +507,103 @@ async function processExpenseFull(chatId, context) {
 }
 
 function getPaymentLabel(method) {
-  const labels = {
-    cash: '💵 Efectivo',
-    bank: '🏦 Transferencia',
-    card: '💳 Tarjeta',
-    credit: '📋 CxC'
-  };
+  const labels = { cash: '💵 Efectivo', credit: '📋 CxC', card: '💳 Tarjeta', bank: '🏦 Transferencia' };
   return labels[method] || method;
 }
 
-// ==================== STATE MACHINE ====================
-// States: null | 'sale_amount' | 'sale_product' | 'sale_client' | 'sale_payment'
-//         | 'expense_amount' | 'expense_desc' | 'expense_vendor' | 'expense_payment'
+// ==================== REPORTS ====================
+async function sendReport(chatId, kind) {
+  const today = new Date().toISOString().split('T')[0];
 
-async function handleStateMessage(chatId, text) {
-  const s = getSession(chatId);
+  if (kind === 'cierre') {
+    // Cierre de mes — preview completo
+    const cierre = await api(`/api/cierre/preview`, 'GET', null, chatId);
 
-  if (text === '❌ Cancelar') {
-    resetSession(chatId);
-    await bot.sendMessage(chatId, '❌ Operación cancelada.', { parse_mode: 'Markdown' });
-    return true;
+    if (cierre.error) {
+      // Fallback: build from individual endpoints
+      const [income, balance, receivables, payables, products] = await Promise.all([
+        api('/api/income-statement', 'GET', null, chatId),
+        api('/api/balance', 'GET', null, chatId),
+        api('/api/receivables', 'GET', null, chatId),
+        api('/api/payables', 'GET', null, chatId),
+        api('/api/products', 'GET', null, chatId)
+      ]);
+
+      const totalCXC = Array.isArray(receivables) ? receivables.reduce((s, r) => s + parseFloat(r.balance || 0), 0) : 0;
+      const totalCXP = Array.isArray(payables) ? payables.reduce((s, p) => s + parseFloat(p.balance || 0), 0) : 0;
+      const netIncome = parseFloat(income.net_income || 0);
+      const totalRevenue = parseFloat(income.total_revenue || 0);
+      const totalExpenses = parseFloat(income.total_expenses || 0);
+
+      const msg =
+        `🔒 *CIERRE DE MES*\n\n` +
+        `📊 *Estado de Resultados*\n` +
+        `Ingresos: ${fmt(totalRevenue)}\n` +
+        `Gastos: ${fmt(totalExpenses)}\n` +
+        `*Utilidad Neta: ${fmt(netIncome)}*\n\n` +
+        `📋 *Cuentas*\n` +
+        `🟢 CxC (te deben): ${fmt(totalCXC)}\n` +
+        `🔴 CxP (debes): ${fmt(totalCXP)}\n\n` +
+        `📦 *Inventario*\n` +
+        `Productos: ${Array.isArray(products) ? products.length : 0}\n` +
+        `Valor total: ${fmt(Array.isArray(products) ? products.reduce((s, p) => s + parseFloat(p.stock_current || 0) * parseFloat(p.cost_price || 0), 0) : 0)}`;
+
+      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+    } else {
+      // Use cierre data directly
+      const msg =
+        `🔒 *CIERRE DE MES*\n\n` +
+        `📊 *Estado de Resultados*\n` +
+        `Ingresos: ${fmt(cierre.totalRevenue || 0)}\n` +
+        `Gastos: ${fmt(cierre.totalExpenses || 0)}\n` +
+        `*Utilidad Neta: ${fmt(cierre.netIncome || 0)}*\n\n` +
+        `📋 *Cuentas*\n` +
+        `🟢 CxC (te deben): ${fmt(cierre.totalCXC || 0)}\n` +
+        `🔴 CxP (debes): ${fmt(cierre.totalCXP || 0)}`;
+
+      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+    }
+    return;
   }
 
-  switch (s.state) {
-
-    // ==================== VENTA FLOW ====================
-    case 'sale_amount': {
-      const amount = parseFloat(text.replace(/[^\d.]/g, ''));
-      if (!amount || amount <= 0) {
-        await bot.sendMessage(chatId, '⚠️ Monto inválido. Ingresa un número positivo:');
-        return true;
-      }
-      s.context.amount = amount;
-      s.state = 'sale_product';
-
-      await bot.sendMessage(chatId, '⏳ Cargando productos...', { parse_mode: 'Markdown' });
-      const prods = await api('/api/products', 'GET', null, chatId);
-
-      if (Array.isArray(prods) && prods.length > 0) {
-        s.context.products = prods;
-        let msg = '📦 *¿Qué producto vendiste?*\n\n';
-        prods.slice(0, 12).forEach((p, i) => {
-          msg += `${i + 1}. ${p.name}\n`;
-        });
-        msg += '\n_O escribe el nombre del producto_';
-        await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
-      } else {
-        s.context.products = [];
-        await bot.sendMessage(chatId, '📝 *¿Qué producto vendiste?*\n\n(Escribe la descripción)', { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
-      }
-      break;
-    }
-
-    case 'sale_product': {
-      s.context.productName = text.trim();
-
-      const num = parseInt(text);
-      if (num > 0 && s.context.products && s.context.products[num - 1]) {
-        const prod = s.context.products[num - 1];
-        s.context.productName = prod.name;
-        s.context.productId = prod.id;
-        s.context.unitPrice = parseFloat(prod.price || s.context.amount);
-      }
-
-      s.state = 'sale_client';
-      await bot.sendMessage(chatId,
-        `📦 Producto: ${s.context.productName}\n` +
-        `💰 Monto: ${fmt(s.context.amount)}\n\n` +
-        `🏪 *¿Nombre del cliente?*`,
-        { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD }
-      );
-      break;
-    }
-
-    case 'sale_client': {
-      s.context.client = text.trim();
-      s.state = 'sale_payment';
-      await bot.sendMessage(chatId,
-        `👤 Cliente: ${s.context.client}\n` +
-        `📦 Producto: ${s.context.productName}\n` +
-        `💰 Monto: ${fmt(s.context.amount)}\n\n` +
-        `💳 *¿Método de pago?*`,
-        { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD }
-      );
-      break;
-    }
-
-    case 'sale_payment': {
-      const methodMap = { '💵 Efectivo': 'cash', '📋 CxC': 'credit', '💳 Tarjeta': 'bank', '🏦 Transferencia': 'bank' };
-      const method = methodMap[text];
-      if (!method) {
-        await bot.sendMessage(chatId, '⚠️ Selecciona una opción del teclado:', { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD });
-        return true;
-      }
-      s.context.paymentMethod = method;
-      s.state = null;
-
-      await bot.sendMessage(chatId, '⏳ Registrando venta...\n\n(Creando factura + ajustando stock + asiento contable)', { parse_mode: 'Markdown' });
-
-      const result = await processSaleFull(chatId, s.context);
-
-      if (!result.success) {
-        await bot.sendMessage(chatId, `❌ Error: ${result.error}`);
-        resetSession(chatId);
-        return true;
-      }
-
-      await bot.sendMessage(chatId, result.message, { parse_mode: 'Markdown' });
-      resetSession(chatId);
-      break;
-    }
-
-    // ==================== GASTO FLOW ====================
-    case 'expense_amount': {
-      const amount = parseFloat(text.replace(/[^\d.]/g, ''));
-      if (!amount || amount <= 0) {
-        await bot.sendMessage(chatId, '⚠️ Monto inválido. Ingresa un número positivo:');
-        return true;
-      }
-      s.context.amount = amount;
-      s.state = 'expense_desc';
-      await bot.sendMessage(chatId,
-        `💰 Monto: ${fmt(amount)}\n\n` +
-        `📝 *¿En qué gastaste?* (descripción)`,
-        { parse_mode: 'Markdown', ...CANCEL_KEYBOARD }
-      );
-      break;
-    }
-
-    case 'expense_desc': {
-      s.context.description = text.trim();
-      s.state = 'expense_vendor';
-      await bot.sendMessage(chatId,
-        `📝 Descripción: ${s.context.description}\n` +
-        `💰 Monto: ${fmt(s.context.amount)}\n\n` +
-        `🏪 *¿Proveedor?* (nombre o "N/A")`,
-        { parse_mode: 'Markdown', ...CANCEL_KEYBOARD }
-      );
-      break;
-    }
-
-    case 'expense_vendor': {
-      s.context.vendor = text.trim();
-      s.state = 'expense_payment';
-      await bot.sendMessage(chatId,
-        `🏪 Proveedor: ${s.context.vendor}\n` +
-        `📝 Descripción: ${s.context.description}\n` +
-        `💰 Monto: ${fmt(s.context.amount)}\n\n` +
-        `💳 *¿Método de pago?*`,
-        { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD }
-      );
-      break;
-    }
-
-    case 'expense_payment': {
-      const methodMap = { '💵 Efectivo': 'cash', '📋 CxP': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
-      const method = methodMap[text];
-      if (!method) {
-        await bot.sendMessage(chatId, '⚠️ Selecciona una opción del teclado:', { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD });
-        return true;
-      }
-      s.context.paymentMethod = method;
-      s.state = null;
-
-      await bot.sendMessage(chatId, '⏳ Registrando gasto...', { parse_mode: 'Markdown' });
-
-      const result = await processExpenseFull(chatId, s.context);
-
-      if (!result.success) {
-        await bot.sendMessage(chatId, `❌ Error: ${result.error}`);
-        resetSession(chatId);
-        return true;
-      }
-
-      await bot.sendMessage(chatId, result.message, { parse_mode: 'Markdown' });
-      resetSession(chatId);
-      break;
-    }
-
-    default:
-      return false;
+  // Daily / Weekly / Monthly — usar income-statement con filtro de fecha
+  let dateFrom = today;
+  if (kind === 'weekly') {
+    const d = new Date(); d.setDate(d.getDate() - 7);
+    dateFrom = d.toISOString().split('T')[0];
+  } else if (kind === 'monthly') {
+    const d = new Date(); d.setMonth(d.getMonth() - 1);
+    dateFrom = d.toISOString().split('T')[0];
   }
-  return true;
+
+  // Get invoices in date range
+  const invoices = await api('/api/invoices', 'GET', null, chatId);
+  const filteredInvoices = Array.isArray(invoices)
+    ? invoices.filter(inv => inv.date >= dateFrom && inv.date <= today)
+    : [];
+
+  const totalSales = filteredInvoices.reduce((s, inv) => s + parseFloat(inv.total || 0), 0);
+  const invoiceCount = filteredInvoices.length;
+
+  // Get expenses
+  const payables = await api('/api/payables', 'GET', null, chatId);
+  const filteredPayables = Array.isArray(payables)
+    ? payables.filter(p => p.date >= dateFrom && p.date <= today)
+    : [];
+  const totalExpenses = filteredPayables.reduce((s, p) => s + parseFloat(p.total || 0), 0);
+
+  const labels = { daily: '📅 Diario', weekly: '📆 Semanal', monthly: '🗓️ Mensual' };
+
+  const msg =
+    `${labels[kind]} *REPORTE*\n\n` +
+    `📅 Período: ${dateFrom} → ${today}\n\n` +
+    `🧾 *Facturas:* ${invoiceCount}\n` +
+    `💰 Ventas: ${fmt(totalSales)}\n\n` +
+    `💸 *Gastos:* ${filteredPayables.length}\n` +
+    `💸 Total Gastos: ${fmt(totalExpenses)}\n\n` +
+    `*Balance: ${fmt(totalSales - totalExpenses)}*`;
+
+  await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
 }
 
 // ==================== COMMAND HANDLERS ====================
@@ -401,12 +617,14 @@ bot.onText(/\/start/, async (msg) => {
   await bot.sendMessage(chatId,
     `🐷 *MisCuentas Bot*\n\n${connected}\n\n` +
     `*Comandos:*\n` +
-    `/start - Este mensaje\n` +
+    `/start - Mensaje inicio\n` +
     `/login - Iniciar sesión\n` +
-    `/balance - Ver balance\n` +
-    `/deudas - CxC y CxP\n` +
     `/venta - Registrar venta\n` +
     `/gasto - Registrar gasto\n` +
+    `/reporte - Ver reportes\n` +
+    `/balance - Balance general\n` +
+    `/deudas - CxC y CxP\n` +
+    `/productos - Ver productos\n` +
     `/logout - Cerrar sesión`,
     { parse_mode: 'Markdown' }
   );
@@ -477,30 +695,33 @@ bot.onText(/\/productos/, async (msg) => {
   await bot.sendMessage(chatId, text, { parse_mode: 'Markdown' });
 });
 
+bot.onText(/\/reporte/, async (msg) => {
+  const chatId = msg.chat.id;
+  const s = getSession(chatId);
+  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero inicia sesión*', { parse_mode: 'Markdown' }); return; }
+  s.state = 'report_type';
+  await bot.sendMessage(chatId, '📊 *¿Qué reporte quieres?*', { parse_mode: 'Markdown', ...REPORT_MENU_KEYBOARD });
+});
+
+// ==================== SALE FLOW START ====================
 bot.onText(/\/venta/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
   if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero inicia sesión*', { parse_mode: 'Markdown' }); return; }
   resetSession(chatId);
-  s.state = 'sale_amount';
-  await bot.sendMessage(chatId,
-    `🧾 *REGISTRAR VENTA*\n\n` +
-    `¿Cuál es el *monto*? (ej: 1500)`,
-    { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD }
-  );
+  s.context.items = [];
+  s.state = 'sale_client';
+  await bot.sendMessage(chatId, '🧾 *REGISTRAR VENTA*\n\n👤 *¿Nombre del cliente?*', { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
 });
 
+// ==================== EXPENSE FLOW START ====================
 bot.onText(/\/gasto/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
   if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero inicia sesión*', { parse_mode: 'Markdown' }); return; }
   resetSession(chatId);
   s.state = 'expense_amount';
-  await bot.sendMessage(chatId,
-    `💸 *REGISTRAR GASTO*\n\n` +
-    `¿Cuál es el *monto*? (ej: 500)`,
-    { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD }
-  );
+  await bot.sendMessage(chatId, '💸 *REGISTRAR GASTO*\n\n💰 *¿Monto?* (ej: 500)', { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
 });
 
 // ==================== NATURAL LANGUAGE ====================
@@ -516,44 +737,42 @@ bot.on('message', async (msg) => {
   }
 
   if (!s.token) {
-    await bot.sendMessage(chatId, '❌ *Primero inicia sesión:*\n/login username password', { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, '❌ *Primero inicia sesión*\n/login username password', { parse_mode: 'Markdown' });
     return;
   }
 
-  if (!GROQ_API_KEY) {
-    await bot.sendMessage(chatId, 'Usa /venta o /gasto para registrar transacciones.', { parse_mode: 'Markdown' });
-    return;
-  }
+  if (!GROQ_API_KEY) return;
 
   const prompt = `Interpreta este mensaje. Responde SOLO con JSON:
 {
-  "intent": "venta|gasto|balance|deudas|productos|ayuda|desconocido",
+  "intent": "venta|gasto|balance|deudas|reportes|productos|ayuda|desconocido",
   "confidence": 0.0-1.0,
-  "response": "respuesta corta en español"
+  "response": "respuesta curta"
 }
 Mensaje: "${text}"
 Ejemplos:
-- "registra una venta" → {"intent":"venta","confidence":0.95,"response":"Entendido. ¿Cuál es el monto?"}
-- "un gasto de luz" → {"intent":"gasto","confidence":0.9,"response":"Perfecto. ¿Cuánto gastaste?"}`;
+- "registra una venta" → {"intent":"venta","confidence":0.95}
+- "muestrame el balance" → {"intent":"balance","confidence":0.9}
+- "un reporte de ventas" → {"intent":"reportes","confidence":0.85}`;
 
   const result = await groqChat(prompt);
-  if (!result) {
-    await bot.sendMessage(chatId, 'Usa /venta o /gasto para registrar transacciones.', { parse_mode: 'Markdown' });
-    return;
-  }
-
-  await bot.sendMessage(chatId, result.response, { parse_mode: 'Markdown' });
+  if (!result) return;
 
   switch (result.intent) {
     case 'venta':
       resetSession(chatId);
-      s.state = 'sale_amount';
-      await bot.sendMessage(chatId, '¿Cuál es el *monto*?', { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD });
+      s.context.items = [];
+      s.state = 'sale_client';
+      await bot.sendMessage(chatId, '🧾 *REGISTRAR VENTA*\n\n👤 *¿Nombre del cliente?*', { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
       break;
     case 'gasto':
       resetSession(chatId);
       s.state = 'expense_amount';
-      await bot.sendMessage(chatId, '¿Cuál es el *monto*?', { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD });
+      await bot.sendMessage(chatId, '💸 *REGISTRAR GASTO*\n\n💰 *¿Monto?*', { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
+      break;
+    case 'reportes':
+      s.state = 'report_type';
+      await bot.sendMessage(chatId, '📊 *¿Qué reporte quieres?*', { parse_mode: 'Markdown', ...REPORT_MENU_KEYBOARD });
       break;
     case 'balance':
       await bot.sendMessage(chatId, '/balance');
@@ -571,5 +790,5 @@ Ejemplos:
 bot.on('polling_error', e => console.error('Polling:', e.code, e.message));
 bot.on('error', e => console.error('Bot error:', e));
 
-console.log('🐷 MisCuentas Bot — Full Process');
+console.log('🐷 MisCuentas Bot — Rediseñado');
 console.log(`📡 ${MISCUENTAS_API}`);
