@@ -73,9 +73,9 @@ const PAYMENT_KEYBOARD = {
 
 const CANCEL_KEYBOARD = {
   reply_markup: JSON.stringify({
-    keyboard: [[{ text: '❌ Cancelar' }],
+    keyboard: [[{ text: '❌ Cancelar' }]],
     one_time_keyboard: true,
-    resize_keybook: true
+    resize_keyboard: true
   })
 };
 
