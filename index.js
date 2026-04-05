@@ -78,44 +78,122 @@ const CANCEL_KEYBOARD = {
   })
 };
 
-// ==================== HELPERS: JOURNAL ====================
-async function createSaleJournalEntry(invoice, chatId) {
-  // Venta: Débito Caja/Banco/CxC (según método) / Crédito Ingreso por Venta
-  const accountMap = {
-    cash: '1101',       // Caja
-    bank: '1102',       // Banco
-    credit: '1104',     // CxC
-    card: '1105'        // Tarjeta (genérico)
-  };
+// ==================== SALE FLOW — PROCESO COMPLETO ====================
+async function processSaleFull(chatId, context) {
+  // 1. Crear cliente si no existe
+  let clientId = null;
+  const clients = await api('/api/clients', 'GET', null, chatId);
+  const existingClient = Array.isArray(clients) ? clients.find(c => c.name === context.client) : null;
+  if (existingClient) {
+    clientId = existingClient.id;
+  } else {
+    const newClient = await api('/api/clients', 'POST', { name: context.client }, chatId);
+    clientId = newClient.id;
+  }
 
-  const debitAccount = accountMap[invoice.payment_method] || '1101';
-  const creditAccount = '4101'; // Ingreso por Ventas
-
-  const journalData = {
+  // 2. Crear invoice (status: issued — activa todo el proceso contable)
+  const invoiceData = {
+    client_id: clientId,
+    client_name: context.client,
+    items: [{
+      product_id: context.productId || null,
+      description: context.productName,
+      qty: 1,
+      price: context.amount,
+      total: context.amount
+    }],
+    subtotal: context.amount,
+    tax: 0,
+    total: context.amount,
     date: new Date().toISOString().split('T')[0],
-    description: `Venta factura ${invoice.invoice_number || invoice.id}`,
-    entries: [
-      { account_code: debitAccount, debit: invoice.total, credit: 0, memo: 'Venta' },
-      { account_code: creditAccount, debit: 0, credit: invoice.total, memo: 'Ingreso' }
-    ],
-    reference: invoice.invoice_number || invoice.id
+    payment_method: context.paymentMethod,
+    status: 'issued'  // ← Clave: activa CxC + journal + CMV automáticamente
   };
 
-  return await api('/api/journal', 'POST', journalData, chatId);
+  const invoice = await api('/api/invoices', 'POST', invoiceData, chatId);
+
+  if (invoice.error) {
+    return { success: false, error: invoice.error };
+  }
+
+  // 3. Reducir stock vía inventory/exit (CMVe genera asiento pérdida inventario)
+  if (context.productId) {
+    // Obtener costo del producto para el exit
+    const products = await api('/api/products', 'GET', null, chatId);
+    const product = Array.isArray(products) ? products.find(p => p.id === context.productId) : null;
+    const unitCost = product?.cost_price || 0;
+
+    await api('/api/inventory/exit', 'POST', {
+      product_id: context.productId,
+      quantity: 1,
+      unit_price: unitCost,
+      reference: `Factura ${invoice.invoice_number || invoice.id}`,
+      notes: `Venta a ${context.client}`,
+      mov_date: new Date().toISOString().split('T')[0],
+      reason: 'venta'
+    }, chatId);
+  }
+
+  // 4. Si CxC → receivable ya se creó en el backend (status=issued en invoice trigger)
+  // 5. Journal entry ya se creó en backend (status=issued trigger)
+
+  return {
+    success: true,
+    invoice,
+    message:
+      `✅ *VENTA REGISTRADA*\n\n` +
+      `📦 ${context.productName}\n` +
+      `🏪 Cliente: ${context.client}\n` +
+      `💰 ${fmt(context.amount)}\n` +
+      `💳 ${getPaymentLabel(context.paymentMethod)}\n` +
+      `📄 Factura: ${invoice.invoice_number || invoice.id}`
+  };
 }
 
-async function createExpenseJournalEntry(payable, method, chatId) {
-  // Gasto: Débito Gasto / Crédito Caja/Banco/CxP (según método)
+// ==================== EXPENSE FLOW — PROCESO COMPLETO ====================
+async function processExpenseFull(chatId, context) {
+  // 1. Crear vendor si no existe
+  let vendorId = null;
+  if (context.vendor !== 'N/A') {
+    const vendors = await api('/api/vendors', 'GET', null, chatId);
+    const existingVendor = Array.isArray(vendors) ? vendors.find(v => v.name === context.vendor) : null;
+    if (existingVendor) {
+      vendorId = existingVendor.id;
+    } else {
+      const newVendor = await api('/api/vendors', 'POST', { name: context.vendor }, chatId);
+      vendorId = newVendor.id;
+    }
+  }
+
+  // 2. Crear payable (gasto = debt)
+  const payableData = {
+    vendor_id: vendorId,
+    vendor_name: context.vendor === 'N/A' ? 'Varios' : context.vendor,
+    description: context.description,
+    total: context.amount,
+    balance: context.amount,
+    date: new Date().toISOString().split('T')[0],
+    payment_method: context.paymentMethod,
+    status: 'approved'
+  };
+
+  const payable = await api('/api/payables', 'POST', payableData, chatId);
+
+  if (payable.error) {
+    return { success: false, error: payable.error };
+  }
+
+  // 3. Journal entry para el gasto (mismo patrón que inventory/exit hace para pérdida)
+  // Débito: Gasto (cuenta clase 6) / Crédito: Caja/Banco/CxP
   const accountMap = {
     cash: '1101',
     bank: '1102',
-    credit: '2101',     // CxP
+    credit: '2101',
     card: '1105'
   };
+  const creditAccount = accountMap[context.paymentMethod] || '1101';
 
-  const creditAccount = accountMap[method] || '1101';
-
-  // Buscar cuenta de gasto genérica
+  // Buscar cuenta de gasto (clase 6)
   const accounts = await api('/api/accounts', 'GET', null, chatId);
   let expenseAccount = '6101'; // Gasto general por defecto
   if (Array.isArray(accounts) && accounts.length > 0) {
@@ -123,21 +201,41 @@ async function createExpenseJournalEntry(payable, method, chatId) {
     if (found) expenseAccount = found.code;
   }
 
-  const journalData = {
+  await api('/api/journal', 'POST', {
     date: new Date().toISOString().split('T')[0],
-    description: `Gasto: ${payable.description || payable.vendor_name}`,
+    description: `Gasto: ${context.description}`,
     entries: [
-      { account_code: expenseAccount, debit: payable.total, credit: 0, memo: 'Gasto' },
-      { account_code: creditAccount, debit: 0, credit: payable.total, memo: payable.vendor_name }
+      { account_code: expenseAccount, debit: context.amount, credit: 0, memo: context.description },
+      { account_code: creditAccount, debit: 0, credit: context.amount, memo: context.vendor === 'N/A' ? 'Varios' : context.vendor }
     ],
     reference: payable.id || payable.payable_number
-  };
+  }, chatId);
 
-  return await api('/api/journal', 'POST', journalData, chatId);
+  return {
+    success: true,
+    payable,
+    message:
+      `✅ *GASTO REGISTRADO*\n\n` +
+      `📝 ${context.description}\n` +
+      `🏪 ${context.vendor === 'N/A' ? 'Varios' : context.vendor}\n` +
+      `💰 ${fmt(context.amount)}\n` +
+      `💳 ${getPaymentLabel(context.paymentMethod)}`
+  };
+}
+
+function getPaymentLabel(method) {
+  const labels = {
+    cash: '💵 Efectivo',
+    bank: '🏦 Transferencia',
+    card: '💳 Tarjeta',
+    credit: '📋 CxC'
+  };
+  return labels[method] || method;
 }
 
 // ==================== STATE MACHINE ====================
-// States: null | 'sale_amount' | 'sale_product' | 'sale_client' | 'sale_payment' | 'expense_amount' | 'expense_desc' | 'expense_vendor' | 'expense_payment'
+// States: null | 'sale_amount' | 'sale_product' | 'sale_client' | 'sale_payment'
+//         | 'expense_amount' | 'expense_desc' | 'expense_vendor' | 'expense_payment'
 
 async function handleStateMessage(chatId, text) {
   const s = getSession(chatId);
@@ -160,7 +258,6 @@ async function handleStateMessage(chatId, text) {
       s.context.amount = amount;
       s.state = 'sale_product';
 
-      // Cargar productos
       await bot.sendMessage(chatId, '⏳ Cargando productos...', { parse_mode: 'Markdown' });
       const prods = await api('/api/products', 'GET', null, chatId);
 
@@ -173,7 +270,6 @@ async function handleStateMessage(chatId, text) {
         msg += '\n_O escribe el nombre del producto_';
         await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
       } else {
-        // Sin productos - pedir descripción libre
         s.context.products = [];
         await bot.sendMessage(chatId, '📝 *¿Qué producto vendiste?*\n\n(Escribe la descripción)', { parse_mode: 'Markdown', ...CANCEL_KEYBOARD });
       }
@@ -183,7 +279,6 @@ async function handleStateMessage(chatId, text) {
     case 'sale_product': {
       s.context.productName = text.trim();
 
-      // Si escribío un número, buscar por índice
       const num = parseInt(text);
       if (num > 0 && s.context.products && s.context.products[num - 1]) {
         const prod = s.context.products[num - 1];
@@ -216,7 +311,7 @@ async function handleStateMessage(chatId, text) {
     }
 
     case 'sale_payment': {
-      const methodMap = { '💵 Efectivo': 'cash', '📋 CxC': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
+      const methodMap = { '💵 Efectivo': 'cash', '📋 CxC': 'credit', '💳 Tarjeta': 'bank', '🏦 Transferencia': 'bank' };
       const method = methodMap[text];
       if (!method) {
         await bot.sendMessage(chatId, '⚠️ Selecciona una opción del teclado:', { parse_mode: 'Markdown', ...PAYMENT_KEYBOARD });
@@ -225,65 +320,17 @@ async function handleStateMessage(chatId, text) {
       s.context.paymentMethod = method;
       s.state = null;
 
-      await bot.sendMessage(chatId, '⏳ Registrando venta...', { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, '⏳ Registrando venta...\n\n(Creando factura + ajustando stock + asiento contable)', { parse_mode: 'Markdown' });
 
-      // 1. Crear o buscar cliente
-      let clientId = null;
-      const clients = await api('/api/clients', 'GET', null, chatId);
-      const existingClient = Array.isArray(clients) ? clients.find(c => c.name === s.context.client) : null;
-      if (existingClient) {
-        clientId = existingClient.id;
-      } else {
-        const newClient = await api('/api/clients', 'POST', { name: s.context.client }, chatId);
-        clientId = newClient.id;
+      const result = await processSaleFull(chatId, s.context);
+
+      if (!result.success) {
+        await bot.sendMessage(chatId, `❌ Error: ${result.error}`);
+        resetSession(chatId);
+        return true;
       }
 
-      // 2. Crear invoice
-      const invoiceData = {
-        client_id: clientId,
-        client_name: s.context.client,
-        items: [{
-          product_id: s.context.productId || null,
-          description: s.context.productName,
-          qty: 1,
-          price: s.context.amount,
-          total: s.context.amount
-        }],
-        subtotal: s.context.amount,
-        tax: 0,
-        total: s.context.amount,
-        date: new Date().toISOString().split('T')[0],
-        payment_method: method
-      };
-
-      const invoice = await api('/api/invoices', 'POST', invoiceData, chatId);
-
-      // 3. Si CxC → crear receivable
-      if (method === 'credit' && clientId) {
-        const receivableData = {
-          client_id: clientId,
-          client_name: s.context.client,
-          description: `Factura ${invoice.invoice_number || invoice.id}`,
-          total: s.context.amount,
-          balance: s.context.amount,
-          date: new Date().toISOString().split('T')[0]
-        };
-        await api('/api/receivables', 'POST', receivableData, chatId);
-      }
-
-      // 4. Crear asiento contable (journal)
-      await createSaleJournalEntry({ ...invoice, payment_method: method }, chatId);
-
-      await bot.sendMessage(chatId,
-        `✅ *VENTA REGISTRADA*\n\n` +
-        `📦 ${s.context.productName}\n` +
-        `🏪 Cliente: ${s.context.client}\n` +
-        `💰 ${fmt(s.context.amount)}\n` +
-        `💳 ${text}\n` +
-        `📄 Factura: ${invoice.invoice_number || invoice.id}`,
-        { parse_mode: 'Markdown' }
-      );
-
+      await bot.sendMessage(chatId, result.message, { parse_mode: 'Markdown' });
       resetSession(chatId);
       break;
     }
@@ -342,44 +389,15 @@ async function handleStateMessage(chatId, text) {
 
       await bot.sendMessage(chatId, '⏳ Registrando gasto...', { parse_mode: 'Markdown' });
 
-      // 1. Crear o buscar vendor
-      let vendorId = null;
-      if (s.context.vendor !== 'N/A') {
-        const vendors = await api('/api/vendors', 'GET', null, chatId);
-        const existingVendor = Array.isArray(vendors) ? vendors.find(v => v.name === s.context.vendor) : null;
-        if (existingVendor) {
-          vendorId = existingVendor.id;
-        } else {
-          const newVendor = await api('/api/vendors', 'POST', { name: s.context.vendor }, chatId);
-          vendorId = newVendor.id;
-        }
+      const result = await processExpenseFull(chatId, s.context);
+
+      if (!result.success) {
+        await bot.sendMessage(chatId, `❌ Error: ${result.error}`);
+        resetSession(chatId);
+        return true;
       }
 
-      // 2. Crear payable (gasto)
-      const payableData = {
-        vendor_id: vendorId,
-        vendor_name: s.context.vendor === 'N/A' ? 'Varios' : s.context.vendor,
-        description: s.context.description,
-        total: s.context.amount,
-        balance: s.context.amount,
-        date: new Date().toISOString().split('T')[0],
-        payment_method: method
-      };
-
-      const payable = await api('/api/payables', 'POST', payableData, chatId);
-
-      // 3. Crear asiento contable
-      await createExpenseJournalEntry({ ...payable, description: s.context.description }, method, chatId);
-
-      await bot.sendMessage(chatId,
-        `✅ *GASTO REGISTRADO*\n\n` +
-        `📝 ${s.context.description}\n` +
-        `🏪 ${s.context.vendor === 'N/A' ? 'Varios' : s.context.vendor}\n` +
-        `💰 ${fmt(s.context.amount)}\n` +
-        `💳 ${text}`,
-        { parse_mode: 'Markdown' }
-      );
-
+      await bot.sendMessage(chatId, result.message, { parse_mode: 'Markdown' });
       resetSession(chatId);
       break;
     }
@@ -571,5 +589,5 @@ Ejemplos:
 bot.on('polling_error', e => console.error('Polling:', e.code, e.message));
 bot.on('error', e => console.error('Bot error:', e));
 
-console.log('🐷 MisCuentas Bot — Conversacional + Journal');
+console.log('🐷 MisCuentas Bot — Full Process');
 console.log(`📡 ${MISCUENTAS_API}`);
