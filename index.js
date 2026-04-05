@@ -185,7 +185,7 @@ async function handleStateMessage(chatId, text) {
 
       s.context.pendingProduct = selectedProduct.name;
       s.context.pendingProductId = selectedProduct.id || null;
-      s.context.pendingProductPrice = parseFloat(selectedProduct.price) || 0;
+      s.context.pendingProductPrice = parseFloat(selectedProduct.sale_price || selectedProduct.price) || 0;
       s.state = 'sale_qty';
 
       await bot.sendMessage(chatId,
