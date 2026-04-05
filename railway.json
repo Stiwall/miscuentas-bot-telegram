@@ -1,0 +1,13 @@
+{
+  "buildCommand": "npm install",
+  "startCommand": "node index.js",
+  "env": {
+    "TELEGRAM_TOKEN": {
+      "description": "Token del bot de Telegram"
+    },
+    "MISCUENTAS_API": {
+      "description": "URL de la API de MisCuentas",
+      "value": "https://miscuentas-contable-app-production.up.railway.app"
+    }
+  }
+}
