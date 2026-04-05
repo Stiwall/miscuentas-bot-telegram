@@ -1,16 +1,17 @@
 {
+  "name": "miscuentas-bot-telegram",
   "buildCommand": "npm install",
   "startCommand": "node index.js",
   "env": {
     "TELEGRAM_TOKEN": {
-      "description": "Token del bot de Telegram"
+      "description": "Token del bot de Telegram (obtener de @BotFather)"
+    },
+    "GROQ_API_KEY": {
+      "description": "API key de Groq para lenguaje natural (groq.com)"
     },
     "MISCUENTAS_API": {
       "description": "URL de la API de MisCuentas",
       "value": "https://miscuentas-contable-app-production.up.railway.app"
-    },
-    "GROQ_API_KEY": {
-      "description": "API key de Groq para lenguaje natural"
     }
   }
 }
