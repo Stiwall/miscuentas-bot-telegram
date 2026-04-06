@@ -27,7 +27,9 @@ async function saveSession(chatId, jwt, plan) {
     await axios.post(MISCUENTAS_API + '/api/bot-sessions', {
       telegram_id: String(chatId),
       jwt_token: jwt,
-      plan_data: plan
+      plan_data: plan,
+      state: userSessions[chatId]?.state || null,
+      context: userSessions[chatId]?.context || {}
     });
   } catch (e) { console.error('Failed to save session:', e.message); }
 }
@@ -37,6 +39,15 @@ async function loadSession(chatId) {
     const r = await axios.get(MISCUENTAS_API + '/api/bot-sessions/' + chatId);
     if (r.data?.jwt_token) {
       userTokens[chatId] = { jwt: r.data.jwt_token, plan: r.data.plan_data };
+      // Restore state and context from API
+      if (r.data.state || r.data.context) {
+        if (!userSessions[chatId]) userSessions[chatId] = {};
+        userSessions[chatId].state = r.data.state || null;
+        userSessions[chatId].context = r.data.context || {};
+        userSessions[chatId].token = r.data.jwt_token;
+        userSessions[chatId].userId = r.data.user_id || null;
+        userSessions[chatId].plan = r.data.plan_data;
+      }
       return userTokens[chatId];
     }
   } catch (e) { /* session not found */ }
@@ -46,7 +57,7 @@ async function loadSession(chatId) {
 async function deleteSession(chatId) {
   try {
     await axios.delete(MISCUENTAS_API + '/api/bot-sessions/' + chatId);
-    await deleteSession(chatId);
+    delete userSessions[chatId];
   } catch (e) { console.error('Failed to delete session:', e.message); }
 }
 
@@ -54,9 +65,18 @@ function getSession(chatId) {
   if (!userSessions[chatId]) userSessions[chatId] = { token: null, userId: null, state: null, context: {}, plan: null };
   return userSessions[chatId];
 }
+
 function resetSession(chatId) {
   const s = getSession(chatId);
   s.state = null; s.context = {};
+  // Persist reset to API
+  if (s.token) saveSession(chatId, s.token, s.plan);
+}
+
+// Helper to persist state changes to API
+async function persistState(chatId) {
+  const s = getSession(chatId);
+  if (s.token) await saveSession(chatId, s.token, s.plan);
 }
 
 function canUse(chatId, feature) {
@@ -421,6 +441,7 @@ async function handleStateMessage(chatId, text) {
         } else {
           s.state = 'receipt_client';
           s.context.receiptData = a;
+          await persistState(chatId);
           await bot.sendMessage(chatId, '🧾 *Registrar venta*\n\n💰 ' + fmt(a.monto) + '\n' + (a.productos ? '📦 ' + a.productos.join(', ') + '\n' : '') + '\n👤 *Cliente?*', { parse_mode: 'Markdown', ...K_CANCEL });
         }
         return true;
@@ -431,6 +452,7 @@ async function handleStateMessage(chatId, text) {
     case 'receipt_client': {
       s.context.client = text.trim();
       s.state = 'receipt_payment';
+      await persistState(chatId);
       await bot.sendMessage(chatId, '💳 *Metodo de pago?*', { parse_mode: 'Markdown', ...K_PAYMENT });
       return true;
     }
@@ -441,6 +463,7 @@ async function handleStateMessage(chatId, text) {
       if (!method) { await bot.sendMessage(chatId, '⚠️ Selecciona:', { parse_mode: 'Markdown', ...K_PAYMENT }); return true; }
       s.context.paymentMethod = method;
       s.state = 'receipt_confirm_sale';
+      await persistState(chatId);
       await bot.sendMessage(chatId,
         '📄 *Resumen*\n\n👤 ' + s.context.client + '\n💰 ' + fmt(s.context.receiptData?.monto) + '\n💳 ' + text + '\n\n¿Todo bien con esto?_',
         { parse_mode: 'Markdown', ...K_CONFIRM }
@@ -474,6 +497,7 @@ async function handleStateMessage(chatId, text) {
     case 'sale_client': {
       s.context.client = text.trim();
       s.state = 'sale_product';
+      await persistState(chatId);
       await bot.sendMessage(chatId, '⏳...');
       const prods = await api('/api/products', 'GET', null, chatId);
       if (Array.isArray(prods) && prods.length > 0) {
@@ -495,6 +519,7 @@ async function handleStateMessage(chatId, text) {
       s.context.pendingProductId = prod.id || null;
       s.context.pendingProductPrice = parseFloat(prod.sale_price || prod.price) || 0;
       s.state = 'sale_qty';
+      await persistState(chatId);
       await bot.sendMessage(chatId, '📦 *' + prod.name + '*\n\n¿Cantidad?', { parse_mode: 'Markdown', ...K_CANCEL });
       break;
     }
@@ -506,6 +531,7 @@ async function handleStateMessage(chatId, text) {
       const price = s.context.pendingProductPrice;
       s.context.items.push({ product_id: s.context.pendingProductId, description: s.context.pendingProduct, qty, price, total: qty * price });
       s.state = 'sale_add_more';
+      await persistState(chatId);
       await bot.sendMessage(chatId, '✅ ' + s.context.pendingProduct + ' x' + qty + ' — ' + fmt(qty * price) + '\n\n¿Vendiste algo más?', { parse_mode: 'Markdown', ...K_YES_NO });
       break;
     }
@@ -513,10 +539,11 @@ async function handleStateMessage(chatId, text) {
     case 'sale_add_more': {
       if (text.includes('Sí')) {
         s.state = 'sale_product';
+        await persistState(chatId);
         let msg = '📦 *Siguiente?*\n\n';
         s.context.products?.slice(0, 15).forEach((p, i) => { msg += (i + 1) + '. ' + p.name + '\n'; });
         await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...K_CANCEL });
-      } else { s.state = 'sale_payment'; await bot.sendMessage(chatId, '💳 *Metodo de pago?*', { parse_mode: 'Markdown', ...K_PAYMENT }); }
+      } else { s.state = 'sale_payment'; await persistState(chatId); await bot.sendMessage(chatId, '💳 *Metodo de pago?*', { parse_mode: 'Markdown', ...K_PAYMENT }); }
       break;
     }
 
@@ -526,6 +553,7 @@ async function handleStateMessage(chatId, text) {
       if (!method) { await bot.sendMessage(chatId, '⚠️ Selecciona:', { parse_mode: 'Markdown', ...K_PAYMENT }); return true; }
       s.context.paymentMethod = method;
       s.state = 'sale_confirm';
+      await persistState(chatId);
       await sendSaleSummary(chatId, s.context);
       break;
     }
@@ -557,6 +585,7 @@ async function handleStateMessage(chatId, text) {
       found.forEach((r, i) => { msg += (i + 1) + '. ' + fmt((r.total_amount - r.paid_amount) || r.total_amount) + ' (' + r.status + ')\n'; });
       msg += '\n💰 *¿Cuanto pago?*';
       s.state = 'cobrar_amount';
+      await persistState(chatId);
       await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...K_CANCEL });
       break;
     }
@@ -567,6 +596,7 @@ async function handleStateMessage(chatId, text) {
       s.context.payAmount = amt;
       s.context.payRecId = s.context.clientRecs[0]?.id;
       s.state = 'cobrar_confirm';
+      await persistState(chatId);
       await bot.sendMessage(chatId, '💰 *' + fmt(amt) + '\n\n¿Todo bien con esto?', { parse_mode: 'Markdown', ...K_CONFIRM });
       break;
     }
@@ -756,15 +786,17 @@ bot.on('message', async (msg) => {
   if (!msg.text || msg.text.startsWith('/')) return;
   const chatId = msg.chat.id;
   const text = msg.text.trim();
+  
+  // Cargar sesión desde API primero para obtener estado persistente
+  await loadSession(chatId);
+  
   const s = getSession(chatId);
   
   // Si hay un flujo activo, manejar directamente sin NLP
-  if (s.state && s.state !== 'idle') { await handleStateMessage(chatId, text); return; }
+  if (s.state && s.state !== 'idle') { await handleStateMessage(chatId, text); await persistState(chatId); return; }
   
   if (!s.token) {
-    const saved = await loadSession(chatId);
-    if (saved) { s.token = saved.jwt; s.plan = saved.plan; }
-    else { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+    await bot.sendMessage(chatId, '❌ *Primero /login*'); return;
   }
   if (!GROQ_API_KEY) {
     if (text.match(/venta|gasto|cobrar|reportes|productos|deudas|balance/i)) {
