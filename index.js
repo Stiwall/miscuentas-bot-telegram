@@ -396,6 +396,8 @@ bot.on('photo', async (msg) => {
 // ==================== STATE MACHINE ====================
 async function handleStateMessage(chatId, text) {
   const s = getSession(chatId);
+  // Recover token from userTokens if missing from userSessions
+  if (!s.token && userTokens[chatId]) s.token = userTokens[chatId].jwt;
   // Ensure token exists before processing state
   if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); resetSession(chatId); return true; }
   if (text === '❌ Cancelar') { resetSession(chatId); await bot.sendMessage(chatId, '❌ Cancelado.'); return true; }
