@@ -113,7 +113,7 @@ async function sendMorningAlert(chatId, token) {
   const in7 = new Date(Date.now() + 7 * 86400000).toISOString().split('T')[0];
   const today = new Date().toISOString().split('T')[0];
   let msg = '🔔 *Buenos dias!*\n\n';
-  if (Array.isArray(recs)) { const u = recs.filter(r => r.status !== 'paid' && (r.due_date || today) <= in7); if (u.length) { msg += '⚠️ *CxC proximas:*\n'; u.slice(0, 5).forEach(r => { msg += '• ' + (r.client_name || 'Cliente') + ': ' + fmt(r.balance || r.total_amount) + '\n'; }); msg += '\n'; } }
+  if (Array.isArray(recs)) { const u = recs.filter(r => r.status !== 'paid' && (r.due_date || today) <= in7); if (u.length) { msg += '⚠️ *CxC proximas:*\n'; u.slice(0, 5).forEach(r => { msg += '• ' + (r.client_name || 'Cliente') + ': ' + fmt((r.total_amount - r.paid_amount) || r.total_amount) + '\n'; }); msg += '\n'; } }
   if (Array.isArray(prods)) { const low = prods.filter(p => { const c = parseFloat(p.stock_current) || 0, m = parseFloat(p.stock_minimum) || 0; return m > 0 && c <= m; }); if (low.length) { msg += '📦 *Stock bajo:*\n'; low.slice(0, 5).forEach(p => { msg += '• ' + p.name + ': ' + p.stock_current + ' / ' + p.stock_minimum + '\n'; }); } }
   if (msg === '🔔 *Buenos dias!*\n\n') msg += '✅ Sin alertas.';
   try { await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' }); } catch (e) { console.error(e.message); }
@@ -137,7 +137,7 @@ async function sendWeeklyReminder(chatId, token) {
   const wInvs = Array.isArray(invs) ? invs.filter(i => i.date >= weekAgo && i.date <= today) : [];
   const pCXC = Array.isArray(recs) ? recs.filter(r => r.status !== 'paid') : [];
   const pCXP = Array.isArray(payables) ? payables.filter(p => p.status !== 'paid') : [];
-  const msg = '📊 *RESUMEN SEMANAL*\n\n🧾 Facturas: ' + wInvs.length + '\n💰 Ventas: ' + fmt(wInvs.reduce((s, i) => s + parseFloat(i.total || 0), 0)) + '\n\n📋 Pendientes:\n🟢 CxC: ' + fmt(pCXC.reduce((s, r) => s + parseFloat(r.balance || 0), 0)) + ' (' + pCXC.length + ')\n🔴 CxP: ' + fmt(pCXP.reduce((s, p) => s + parseFloat(p.balance || 0), 0)) + ' (' + pCXP.length + ')';
+  const msg = '📊 *RESUMEN SEMANAL*\n\n🧾 Facturas: ' + wInvs.length + '\n💰 Ventas: ' + fmt(wInvs.reduce((s, i) => s + parseFloat(i.total || 0), 0)) + '\n\n📋 Pendientes:\n🟢 CxC: ' + fmt(pCXC.reduce((s, r) => s + parseFloat((r.total_amount - r.paid_amount) || 0), 0)) + ' (' + pCXC.length + ')\n🔴 CxP: ' + fmt(pCXP.reduce((s, p) => s + parseFloat((p.total_amount - p.paid_amount) || 0), 0)) + ' (' + pCXP.length + ')';
   try { await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' }); } catch (e) { console.error(e.message); }
 }
 
@@ -230,8 +230,8 @@ async function sendReport(chatId, kind) {
       api('/api/receivables', 'GET', null, chatId), api('/api/payables', 'GET', null, chatId),
       api('/api/products', 'GET', null, chatId)
     ]);
-    const totalCXC = Array.isArray(cxc) ? cxc.reduce((s, r) => s + parseFloat(r.balance || 0), 0) : 0;
-    const totalCXP = Array.isArray(cxp) ? cxp.reduce((s, p) => s + parseFloat(p.balance || 0), 0) : 0;
+    const totalCXC = Array.isArray(cxc) ? cxc.reduce((s, r) => s + parseFloat((r.total_amount - r.paid_amount) || 0), 0) : 0;
+    const totalCXP = Array.isArray(cxp) ? cxp.reduce((s, p) => s + parseFloat((p.total_amount - p.paid_amount) || 0), 0) : 0;
     const invVal = Array.isArray(prods) ? prods.reduce((s, p) => s + parseFloat(p.stock_current || 0) * parseFloat(p.cost_price || 0), 0) : 0;
     const pendingCXC = Array.isArray(cxc) ? cxc.filter(r => r.status !== 'paid') : [];
     const pendingCXP = Array.isArray(cxp) ? cxp.filter(p => p.status !== 'paid') : [];
@@ -242,8 +242,8 @@ async function sendReport(chatId, kind) {
       'Ingresos: ' + fmt(inc?.total_revenue || 0) + '\n' +
       'Gastos: ' + fmt(inc?.total_expenses || 0) + '\n' +
       '*Utilidad: ' + fmt(inc?.net_income || 0) + '*\n\n' +
-      '📋 *CxC*\nTotal: ' + fmt(totalCXC) + '\nPendiente: ' + fmt(pendingCXC.reduce((s, r) => s + parseFloat(r.balance || 0), 0)) + ' (' + pendingCXC.length + ')\n\n' +
-      '📋 *CxP*\nTotal: ' + fmt(totalCXP) + '\nPendiente: ' + fmt(pendingCXP.reduce((s, p) => s + parseFloat(p.balance || 0), 0)) + ' (' + pendingCXP.length + ')\n\n' +
+      '📋 *CxC*\nTotal: ' + fmt(totalCXC) + '\nPendiente: ' + fmt(pendingCXC.reduce((s, r) => s + parseFloat((r.total_amount - r.paid_amount) || 0), 0)) + ' (' + pendingCXC.length + ')\n\n' +
+      '📋 *CxP*\nTotal: ' + fmt(totalCXP) + '\nPendiente: ' + fmt(pendingCXP.reduce((s, p) => s + parseFloat((p.total_amount - p.paid_amount) || 0), 0)) + ' (' + pendingCXP.length + ')\n\n' +
       '📦 *Inventario*\nValor: ' + fmt(invVal) + '\n⚠️ Stock critico: ' + lowStock.length,
       { parse_mode: 'Markdown' }
     );
@@ -266,7 +266,7 @@ async function sendReport(chatId, kind) {
       '🧾 Facturas: ' + filtered.length + ' — ' + fmt(totalSales) + '\n' +
       '💸 Gastos: ' + filteredPay.length + ' — ' + fmt(totalExp) + '\n' +
       '*Balance: ' + fmt(totalSales - totalExp) + '*\n\n' +
-      '📋 *Pendientes*\n🟢 CxC: ' + fmt(pendingCXC.reduce((s, r) => s + parseFloat(r.balance || 0), 0)) + '\n🔴 CxP: ' + fmt(pendingCXP.reduce((s, p) => s + parseFloat(p.balance || 0), 0)),
+      '📋 *Pendientes*\n🟢 CxC: ' + fmt(pendingCXC.reduce((s, r) => s + parseFloat((r.total_amount - r.paid_amount) || 0), 0)) + '\n🔴 CxP: ' + fmt(pendingCXP.reduce((s, p) => s + parseFloat((p.total_amount - p.paid_amount) || 0), 0)),
       { parse_mode: 'Markdown' }
     );
     return;
@@ -318,8 +318,8 @@ async function sendReport(chatId, kind) {
       '💸 Gastos: ' + filteredPay.length + ' — ' + fmt(totalExp) + '\n' +
       '*Utilidad: ' + fmt(totalSales - totalExp) + '*\n\n' +
       '📋 *Cuentas*\n' +
-      '🟢 CxC pendiente: ' + fmt(pendingCXC.reduce((s, r) => s + parseFloat(r.balance || 0), 0)) + ' (' + pendingCXC.length + ')\n' +
-      '🔴 CxP pendiente: ' + fmt(pendingCXP.reduce((s, p) => s + parseFloat(p.balance || 0), 0)) + ' (' + pendingCXP.length + ')\n\n' +
+      '🟢 CxC pendiente: ' + fmt(pendingCXC.reduce((s, r) => s + parseFloat((r.total_amount - r.paid_amount) || 0), 0)) + ' (' + pendingCXC.length + ')\n' +
+      '🔴 CxP pendiente: ' + fmt(pendingCXP.reduce((s, p) => s + parseFloat((p.total_amount - p.paid_amount) || 0), 0)) + ' (' + pendingCXP.length + ')\n\n' +
       '📦 *Inventario*\n' +
       'Valor: ' + fmt(invVal) + '\n' +
       '⚠️ Stock critico: ' + lowStock.length,
@@ -517,7 +517,7 @@ async function handleStateMessage(chatId, text) {
       if (!found.length) { await bot.sendMessage(chatId, '⚠️ Sin cuentas pendientes.'); resetSession(chatId); return true; }
       s.context.clientRecs = found;
       let msg = '📋 *Cuentas de ' + s.context.clientName + ':*\n\n';
-      found.forEach((r, i) => { msg += (i + 1) + '. ' + fmt(r.balance || r.total_amount) + ' (' + r.status + ')\n'; });
+      found.forEach((r, i) => { msg += (i + 1) + '. ' + fmt((r.total_amount - r.paid_amount) || r.total_amount) + ' (' + r.status + ')\n'; });
       msg += '\n💰 *¿Cuanto pago?*';
       s.state = 'cobrar_amount';
       await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...K_CANCEL });
@@ -653,8 +653,8 @@ bot.onText(/\/deudas/, async (msg) => {
   if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
   await bot.sendMessage(chatId, '📋...');
   const [cxc, cxp] = await Promise.all([api('/api/receivables', 'GET', null, chatId), api('/api/payables', 'GET', null, chatId)]);
-  const totalCXC = Array.isArray(cxc) ? cxc.reduce((s, r) => s + parseFloat(r.balance || 0), 0) : 0;
-  const totalCXP = Array.isArray(cxp) ? cxp.reduce((s, p) => s + parseFloat(p.balance || 0), 0) : 0;
+  const totalCXC = Array.isArray(cxc) ? cxc.reduce((s, r) => s + parseFloat((r.total_amount - r.paid_amount) || 0), 0) : 0;
+  const totalCXP = Array.isArray(cxp) ? cxp.reduce((s, p) => s + parseFloat((p.total_amount - p.paid_amount) || 0), 0) : 0;
   await bot.sendMessage(chatId, '📋 *Cuentas*\n\n🟢 Te deben: ' + fmt(totalCXC) + '\n🔴 Debes: ' + fmt(totalCXP), { parse_mode: 'Markdown' });
 });
 
