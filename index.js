@@ -38,16 +38,19 @@ async function loadSession(chatId) {
   try {
     const r = await axios.get(MISCUENTAS_API + '/api/bot-sessions/' + chatId);
     if (r.data?.jwt_token) {
+      // Ensure userSessions[chatId] exists with all required fields
+      if (!userSessions[chatId]) userSessions[chatId] = { token: null, userId: null, state: null, context: {}, plan: null };
+      
+      // Restore everything from API
+      userSessions[chatId].token = r.data.jwt_token;
+      userSessions[chatId].userId = r.data.user_id || null;
+      userSessions[chatId].plan = r.data.plan_data || null;
+      userSessions[chatId].state = r.data.state || null;
+      userSessions[chatId].context = r.data.context || {};
+      
+      // Also update userTokens for compatibility
       userTokens[chatId] = { jwt: r.data.jwt_token, plan: r.data.plan_data };
-      // Restore state and context from API
-      if (r.data.state || r.data.context) {
-        if (!userSessions[chatId]) userSessions[chatId] = {};
-        userSessions[chatId].state = r.data.state || null;
-        userSessions[chatId].context = r.data.context || {};
-        userSessions[chatId].token = r.data.jwt_token;
-        userSessions[chatId].userId = r.data.user_id || null;
-        userSessions[chatId].plan = r.data.plan_data;
-      }
+      
       return userTokens[chatId];
     }
   } catch (e) { /* session not found */ }
