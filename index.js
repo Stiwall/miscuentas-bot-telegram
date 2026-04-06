@@ -12,28 +12,43 @@ const MINIMAX_VL_URL = 'https://api.minimax.io/anthropic/v1/chat/completions';
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
 const userSessions = {};
-// Persistent session storage ( Railway ephemeral - sessions lost on restart without persistent disk )
-const SESSION_FILE = process.env.SESSION_FILE || '/tmp/miscuentas-bot-sessions.json';
-const userTokens = {};
+// Session storage via MisCuentas API (persistent across restarts)
+const userTokens = {};  // chatId -> { jwt, plan }
 
-function loadSessions() {
+async function loadSessions() {
+  // Try to load each user's session from API - we need their telegram IDs
+  // Since we don't know which IDs to load, we rely on on-demand loading
+  // When a user sends /login, we save to API and load from there next time
+  console.log('Bot sessions managed via API (MisCuentas backend)');
+}
+
+async function saveSession(chatId, jwt, plan) {
   try {
-    if (fs.existsSync(SESSION_FILE)) {
-      const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
-      Object.assign(userTokens, data);
-      console.log('Loaded ' + Object.keys(userTokens).length + ' sessions from disk');
+    await axios.post(MISCUENTAS_API + '/api/bot-sessions', {
+      telegram_id: String(chatId),
+      jwt_token: jwt,
+      plan_data: plan
+    });
+  } catch (e) { console.error('Failed to save session:', e.message); }
+}
+
+async function loadSession(chatId) {
+  try {
+    const r = await axios.get(MISCUENTAS_API + '/api/bot-sessions/' + chatId);
+    if (r.data?.jwt_token) {
+      userTokens[chatId] = { jwt: r.data.jwt_token, plan: r.data.plan_data };
+      return userTokens[chatId];
     }
-  } catch (e) { console.error('Failed to load sessions:', e.message); }
+  } catch (e) { /* session not found */ }
+  return null;
 }
 
-function saveSessions() {
+async function deleteSession(chatId) {
   try {
-    fs.writeFileSync(SESSION_FILE, JSON.stringify(userTokens));
-  } catch (e) { console.error('Failed to save sessions:', e.message); }
+    await axios.delete(MISCUENTAS_API + '/api/bot-sessions/' + chatId);
+    await deleteSession(chatId);
+  } catch (e) { console.error('Failed to delete session:', e.message); }
 }
-
-// Load existing sessions on startup
-loadSessions();
 
 function getSession(chatId) {
   if (!userSessions[chatId]) userSessions[chatId] = { token: null, userId: null, state: null, context: {}, plan: null };
@@ -124,7 +139,7 @@ function startMorningAlerts() {
   morningInterval = setInterval(() => {
     const now = new Date();
     if (now.getUTCHours() === 12 && now.getUTCMinutes() === 0) {
-      Object.entries(userTokens).forEach(([chatId, token]) => sendMorningAlert(parseInt(chatId), token).catch(console.error));
+      Object.entries(userTokens).forEach(([chatId, sess]) => sendMorningAlert(parseInt(chatId), sess?.jwt).catch(console.error));
     }
   }, 60000);
 }
@@ -146,7 +161,7 @@ function startWeeklyReminder() {
     const now = new Date();
     if (now.getUTCDay() === 1 && now.getUTCHours() === 12 && now.getUTCMinutes() === 0) {
       const today = now.toISOString().split('T')[0];
-      if (lastWeeklyDate !== today) { lastWeeklyDate = today; Object.entries(userTokens).forEach(([chatId, token]) => sendWeeklyReminder(parseInt(chatId), token).catch(console.error)); }
+      if (lastWeeklyDate !== today) { lastWeeklyDate = today; Object.entries(userTokens).forEach(([chatId, sess]) => sendWeeklyReminder(parseInt(chatId), sess?.jwt).catch(console.error)); }
     }
   }, 60000);
 }
@@ -633,13 +648,14 @@ bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
     const s = getSession(chatId);
     s.token = r.data.token;
     s.userId = r.data.user?.id;
-    userTokens[chatId] = r.data.token; saveSessions();
     try {
       const planRes = await axios.get(MISCUENTAS_API + '/api/auth/plan', { headers: { 'x-session-token': r.data.token } });
       const planData = planRes.data || {};
       s.plan = planData;
+      userTokens[chatId] = { jwt: r.data.token, plan: planData };
+      await saveSession(chatId, r.data.token, planData);
       if (!planData.bot_access && planData.plan?.toLowerCase() !== 'admin' && planData.plan_name !== 'Admin') {
-        delete userTokens[chatId]; saveSessions();
+        await deleteSession(chatId);
         await bot.sendMessage(chatId, '❌ *Acceso denegado al bot*\n\nPlan: ' + (planData.plan_name || planData.plan || 'trial') + '\n\n👉 miscuentas-contable.app/upgrade', { parse_mode: 'Markdown' });
         return;
       }
@@ -654,7 +670,7 @@ bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
 
 bot.onText(/\/logout/, async (msg) => {
   const chatId = msg.chat.id;
-  delete userTokens[chatId]; saveSessions();
+  await deleteSession(chatId);
   resetSession(chatId);
   await bot.sendMessage(chatId, '👋 *Sesion cerrada*', { parse_mode: 'Markdown' });
 });
