@@ -11,9 +11,12 @@ const MINIMAX_VL_URL = 'https://api.minimax.io/anthropic/v1/chat/completions';
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
+// Global token map - survives process restarts within same instance
+const globalTokens = new Map();  // chatId -> jwt token (persistent across calls)
+
 // Session storage - in-memory only (Railway configured with 1 replica to avoid state loss)
 const userSessions = {};  // chatId -> { token, userId, state, context, plan }
-const userTokens = {};    // chatId -> { jwt, plan }
+const userTokens = {};    // chatId -> { jwt, plan } (backup reference)
 
 async function loadSessions() {
   console.log('Bot sessions managed in-memory (1 replica configured in Railway)');
@@ -652,6 +655,7 @@ bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
     const s = getSession(chatId);
     s.token = r.data.token;
     s.userId = r.data.user?.id;
+    globalTokens.set(chatId, r.data.token);  // Persist token globally
     try {
       const planRes = await axios.get(MISCUENTAS_API + '/api/auth/plan', { headers: { 'x-session-token': r.data.token } });
       const planData = planRes.data || {};
@@ -760,6 +764,13 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text.trim();
   const s = getSession(chatId);
+  
+  // Recover token from globalTokens if missing
+  if (!s.token && globalTokens.has(chatId)) {
+    if (!userSessions[chatId]) userSessions[chatId] = {};
+    userSessions[chatId].token = globalTokens.get(chatId);
+    s.token = userSessions[chatId].token;
+  }
   
   // Si hay un flujo activo, manejar directamente sin NLP
   if (s.state && s.state !== 'idle') { await handleStateMessage(chatId, text); return; }
