@@ -206,7 +206,7 @@ async function sendSaleSummary(chatId, ctx) {
   const subtotal = items.reduce((s, i) => s + i.total, 0);
   let msg = '📄 *FACTURA*\n\n👤 ' + ctx.client + '\n\n';
   items.forEach(i => { msg += '📦 ' + i.description + ' x' + i.qty + ' — ' + fmt(i.total) + '\n'; });
-  msg += '\n─────────────\n💰 *Total: ' + fmt(subtotal) + '*\n💳 ' + getPaymentLabel(ctx.paymentMethod) + '\n\n_Confirmas?_';
+  msg += '\n─────────────\n💰 *Total: ' + fmt(subtotal) + '*\n💳 ' + getPaymentLabel(ctx.paymentMethod) + '\n\n¿Todo bien con esto?_';
   await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...K_CONFIRM });
 }
 
@@ -442,7 +442,7 @@ async function handleStateMessage(chatId, text) {
       s.context.paymentMethod = method;
       s.state = 'receipt_confirm_sale';
       await bot.sendMessage(chatId,
-        '📄 *Resumen*\n\n👤 ' + s.context.client + '\n💰 ' + fmt(s.context.receiptData?.monto) + '\n💳 ' + text + '\n\n_¿Confirmas venta?_',
+        '📄 *Resumen*\n\n👤 ' + s.context.client + '\n💰 ' + fmt(s.context.receiptData?.monto) + '\n💳 ' + text + '\n\n¿Todo bien con esto?_',
         { parse_mode: 'Markdown', ...K_CONFIRM }
       );
       return true;
@@ -478,7 +478,7 @@ async function handleStateMessage(chatId, text) {
       const prods = await api('/api/products', 'GET', null, chatId);
       if (Array.isArray(prods) && prods.length > 0) {
         s.context.products = prods;
-        let msg = '📦 *Producto?*\n\n';
+        let msg = '📦 *¿Qué vendiste?*\n\n';
         prods.slice(0, 15).forEach((p, i) => { msg += (i + 1) + '. ' + p.name + '\n'; });
         msg += '\n_O escribe_';
         await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...K_CANCEL });
@@ -506,7 +506,7 @@ async function handleStateMessage(chatId, text) {
       const price = s.context.pendingProductPrice;
       s.context.items.push({ product_id: s.context.pendingProductId, description: s.context.pendingProduct, qty, price, total: qty * price });
       s.state = 'sale_add_more';
-      await bot.sendMessage(chatId, '✅ ' + s.context.pendingProduct + ' x' + qty + ' — ' + fmt(qty * price) + '\n\n¿Otro?', { parse_mode: 'Markdown', ...K_YES_NO });
+      await bot.sendMessage(chatId, '✅ ' + s.context.pendingProduct + ' x' + qty + ' — ' + fmt(qty * price) + '\n\n¿Vendiste algo más?', { parse_mode: 'Markdown', ...K_YES_NO });
       break;
     }
 
@@ -567,7 +567,7 @@ async function handleStateMessage(chatId, text) {
       s.context.payAmount = amt;
       s.context.payRecId = s.context.clientRecs[0]?.id;
       s.state = 'cobrar_confirm';
-      await bot.sendMessage(chatId, '💰 ' + fmt(amt) + '\n\n¿Confirmas pago a ' + s.context.clientName + '?', { parse_mode: 'Markdown', ...K_CONFIRM });
+      await bot.sendMessage(chatId, '💰 *' + fmt(amt) + '\n\n¿Todo bien con esto?', { parse_mode: 'Markdown', ...K_CONFIRM });
       break;
     }
 
@@ -785,7 +785,7 @@ bot.on('message', async (msg) => {
     return;
   }
   switch (result.intent) {
-    case 'venta': if (canUse(chatId, 'venta')) { resetSession(chatId); s.context.items = []; s.state = 'sale_client'; await bot.sendMessage(chatId, '🧾 *VENTA*\n\n👤 Cliente?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
+    case 'venta': if (canUse(chatId, 'venta')) { resetSession(chatId); s.context.items = []; s.state = 'sale_client'; await bot.sendMessage(chatId, '🧾 *VENTA*\n\n¿A quién le vendiste?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
     case 'gasto': if (canUse(chatId, 'gasto')) { resetSession(chatId); s.state = 'expense_amount'; await bot.sendMessage(chatId, '💸 *GASTO*\n\n💰 Monto?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
     case 'cobrar': if (canUse(chatId, 'cobrar')) { resetSession(chatId); s.state = 'cobrar_client'; await bot.sendMessage(chatId, '💰 *COBRAR*\n\n👤 Cliente?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
     case 'reportes': s.state = 'report_type'; await bot.sendMessage(chatId, '📊 *Reporte?*', { parse_mode: 'Markdown', ...K_REPORT }); break;
