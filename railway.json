@@ -2,6 +2,11 @@
   "name": "miscuentas-bot-telegram",
   "buildCommand": "npm install",
   "startCommand": "node index.js",
+  "deploy": {
+    "replicas": 1,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  },
   "env": {
     "TELEGRAM_TOKEN": {
       "description": "Token del bot de Telegram (obtener de @BotFather)"

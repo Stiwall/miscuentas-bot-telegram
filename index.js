@@ -11,57 +11,27 @@ const MINIMAX_VL_URL = 'https://api.minimax.io/anthropic/v1/chat/completions';
 
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
-const userSessions = {};
-// Session storage via MisCuentas API (persistent across restarts)
-const userTokens = {};  // chatId -> { jwt, plan }
+// Session storage - in-memory only (Railway configured with 1 replica to avoid state loss)
+const userSessions = {};  // chatId -> { token, userId, state, context, plan }
+const userTokens = {};    // chatId -> { jwt, plan }
 
 async function loadSessions() {
-  // Try to load each user's session from API - we need their telegram IDs
-  // Since we don't know which IDs to load, we rely on on-demand loading
-  // When a user sends /login, we save to API and load from there next time
-  console.log('Bot sessions managed via API (MisCuentas backend)');
+  console.log('Bot sessions managed in-memory (1 replica configured in Railway)');
 }
 
 async function saveSession(chatId, jwt, plan) {
-  try {
-    await axios.post(MISCUENTAS_API + '/api/bot-sessions', {
-      telegram_id: String(chatId),
-      jwt_token: jwt,
-      plan_data: plan,
-      state: userSessions[chatId]?.state || null,
-      context: userSessions[chatId]?.context || {}
-    });
-  } catch (e) { console.error('Failed to save session:', e.message); }
+  // In-memory only - no API persistence needed with 1 replica
 }
 
 async function loadSession(chatId) {
-  try {
-    const r = await axios.get(MISCUENTAS_API + '/api/bot-sessions/' + chatId);
-    if (r.data?.jwt_token) {
-      // Ensure userSessions[chatId] exists with all required fields
-      if (!userSessions[chatId]) userSessions[chatId] = { token: null, userId: null, state: null, context: {}, plan: null };
-      
-      // Restore everything from API
-      userSessions[chatId].token = r.data.jwt_token;
-      userSessions[chatId].userId = r.data.user_id || null;
-      userSessions[chatId].plan = r.data.plan_data || null;
-      userSessions[chatId].state = r.data.state || null;
-      userSessions[chatId].context = r.data.context || {};
-      
-      // Also update userTokens for compatibility
-      userTokens[chatId] = { jwt: r.data.jwt_token, plan: r.data.plan_data };
-      
-      return userTokens[chatId];
-    }
-  } catch (e) { /* session not found */ }
+  // In-memory only
+  if (userTokens[chatId]) return userTokens[chatId];
   return null;
 }
 
 async function deleteSession(chatId) {
-  try {
-    await axios.delete(MISCUENTAS_API + '/api/bot-sessions/' + chatId);
-    delete userSessions[chatId];
-  } catch (e) { console.error('Failed to delete session:', e.message); }
+  delete userSessions[chatId];
+  delete userTokens[chatId];
 }
 
 function getSession(chatId) {
@@ -72,14 +42,10 @@ function getSession(chatId) {
 function resetSession(chatId) {
   const s = getSession(chatId);
   s.state = null; s.context = {};
-  // Persist reset to API
-  if (s.token) saveSession(chatId, s.token, s.plan);
 }
 
-// Helper to persist state changes to API
 async function persistState(chatId) {
-  const s = getSession(chatId);
-  if (s.token) await saveSession(chatId, s.token, s.plan);
+  // In-memory only - no-op with 1 replica
 }
 
 function canUse(chatId, feature) {
@@ -789,17 +755,15 @@ bot.on('message', async (msg) => {
   if (!msg.text || msg.text.startsWith('/')) return;
   const chatId = msg.chat.id;
   const text = msg.text.trim();
-  
-  // Cargar sesión desde API primero para obtener estado persistente
-  await loadSession(chatId);
-  
   const s = getSession(chatId);
   
   // Si hay un flujo activo, manejar directamente sin NLP
-  if (s.state && s.state !== 'idle') { await handleStateMessage(chatId, text); await persistState(chatId); return; }
+  if (s.state && s.state !== 'idle') { await handleStateMessage(chatId, text); return; }
   
   if (!s.token) {
-    await bot.sendMessage(chatId, '❌ *Primero /login*'); return;
+    const saved = await loadSession(chatId);
+    if (saved) { s.token = saved.jwt; s.plan = saved.plan; }
+    else { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
   }
   if (!GROQ_API_KEY) {
     if (text.match(/venta|gasto|cobrar|reportes|productos|deudas|balance/i)) {
