@@ -449,9 +449,9 @@ bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
         headers: { 'x-session-token': r.data.token }
       });
       const planData = planRes.data || {};
-      if (!planData.bot_access) {
+      const currentPlan = planData.plan_name || planData.plan || 'trial';
+      if (!planData.bot_access && currentPlan !== 'Admin') {
         delete userTokens[chatId];
-        const currentPlan = planData.plan_name || planData.plan || 'trial';
         await bot.sendMessage(chatId,
           `❌ *Acceso denegado al bot*\n\nTu plan actual: ${currentPlan}\n\n📱 Actualiza a *Plan Pro* (RD$990/mes) para usar el bot\n👉 miscuentas-contable.app/upgrade`,
           { parse_mode: 'Markdown' }
