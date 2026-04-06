@@ -433,6 +433,7 @@ bot.onText(/\/start/, async (msg) => {
   await bot.sendMessage(chatId, `🐷 *MisCuentas Bot*\n\n${s.token ? '✅ Conectado' : '❌ Sin sesión'}\n\n/venta /gasto /cobrar /reporte\n/balance /deudas /productos\n/login /logout`, { parse_mode: 'Markdown' });
 });
 
+
 bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
   const chatId = msg.chat.id;
   await bot.sendMessage(chatId, '⏳...');
@@ -441,11 +442,33 @@ bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
     const s = getSession(chatId);
     s.token = r.data.token;
     s.userId = r.data.user?.id;
-    userTokens[chatId] = r.data.token;
-    await bot.sendMessage(chatId, '✅ *Sesión iniciada*', { parse_mode: 'Markdown' });
+
+    // Check bot_access in plan
+    try {
+      const planRes = await axios.get(`${MISCUENTAS_API}/api/auth/plan`, {
+        headers: { 'x-session-token': r.data.token }
+      });
+      const planData = planRes.data || {};
+      if (!planData.bot_access) {
+        delete userTokens[chatId];
+        const currentPlan = planData.plan_name || planData.plan || 'trial';
+        await bot.sendMessage(chatId,
+          `❌ *Acceso denegado al bot*\n\nTu plan actual: ${currentPlan}\n\n📱 Actualiza a *Plan Pro* (RD$990/mes) para usar el bot\n👉 miscuentas-contable.app/upgrade`,
+          { parse_mode: 'Markdown' }
+        );
+        return;
+      }
+      // Plan OK - bot access granted
+      userTokens[chatId] = r.data.token;
+      const trialInfo = planData.trial_active ? `\n\n📅 Trial: ${planData.trial_days_left} días restantes` : '';
+      await bot.sendMessage(chatId, `✅ *Sesión iniciada*\nPlan: ${planData.plan_name}${trialInfo}`, { parse_mode: 'Markdown' });
+    } catch (e) {
+      // If plan check fails, still allow access with token
+      userTokens[chatId] = r.data.token;
+      await bot.sendMessage(chatId, '✅ *Sesión iniciada*', { parse_mode: 'Markdown' });
+    }
   } else { await bot.sendMessage(chatId, '❌ *Credenciales inválidas*', { parse_mode: 'Markdown' }); }
 });
-
 bot.onText(/\/logout/, async (msg) => {
   const chatId = msg.chat.id;
   delete userTokens[chatId];
