@@ -668,6 +668,12 @@ bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
   } else { await bot.sendMessage(chatId, '❌ *Credenciales invalidas*', { parse_mode: 'Markdown' }); }
 });
 
+bot.onText(/\/cancelar/, async (msg) => {
+  const chatId = msg.chat.id;
+  resetSession(chatId);
+  await bot.sendMessage(chatId, '❌ *Cancelado.*', { parse_mode: 'Markdown' });
+});
+
 bot.onText(/\/logout/, async (msg) => {
   const chatId = msg.chat.id;
   await deleteSession(chatId);
@@ -751,11 +757,25 @@ bot.on('message', async (msg) => {
   const text = msg.text.trim();
   const s = getSession(chatId);
   if (s.state) { await handleStateMessage(chatId, text); return; }
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
-  if (!GROQ_API_KEY) return;
-  const prompt = 'Responde JSON: {"intent":"venta|gasto|cobrar|reportes|balance|deudas|productos|ayuda|desconocido","confidence":0.0-1.0}\nMensaje: "' + text + '"\nEjemplos:\n- "registra una venta" → {"intent":"venta","confidence":0.95}\n- "balance" → {"intent":"balance","confidence":0.9}';
+  if (!s.token) {
+    const saved = await loadSession(chatId);
+    if (saved) { s.token = saved.jwt; s.plan = saved.plan; }
+    else { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+  }
+  if (!GROQ_API_KEY) {
+    if (text.match(/venta|gasto|cobrar|reportes|productos|deudas|balance/i)) {
+      await bot.sendMessage(chatId, '🐷 *Usa comandos directos:*\n/venta /gasto /cobrar /reporte /productos /deudas /balance', { parse_mode: 'Markdown' });
+    } else {
+      await bot.sendMessage(chatId, '❌ *No entendí.* /help', { parse_mode: 'Markdown' });
+    }
+    return;
+  }
+  const prompt = 'Responde JSON: {"intent":"venta|gasto|cobrar|reportes|balance|deudas|productos|ayuda|desconocido","confidence":"0.0-1.0"}\nMensaje: "' + text + '"\nEjemplos:\n- "registra una venta" → {"intent":"venta","confidence":0.95}\n- "balance" → {"intent":"balance","confidence":0.9}\n- "registrar gasto" → {"intent":"gasto","confidence":0.9}\n- "cobrar" → {"intent":"cobrar","confidence":0.9}\n- "reporte" → {"intent":"reportes","confidence":0.85}';
   const result = await groqChat(prompt);
-  if (!result) return;
+  if (!result || result.intent === 'desconocido' || result.confidence < 0.4) {
+    await bot.sendMessage(chatId, '❌ *No entendí.* Prueba: /venta /gasto /cobrar /reporte', { parse_mode: 'Markdown' });
+    return;
+  }
   switch (result.intent) {
     case 'venta': if (canUse(chatId, 'venta')) { resetSession(chatId); s.context.items = []; s.state = 'sale_client'; await bot.sendMessage(chatId, '🧾 *VENTA*\n\n👤 Cliente?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
     case 'gasto': if (canUse(chatId, 'gasto')) { resetSession(chatId); s.state = 'expense_amount'; await bot.sendMessage(chatId, '💸 *GASTO*\n\n💰 Monto?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
