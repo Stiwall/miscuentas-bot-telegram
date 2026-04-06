@@ -123,7 +123,7 @@ async function analyzeReceiptPhoto(filePath) {
       model: 'MiniMax-VL-01',
       messages: [{ role: 'user', content: [
         { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,' + imageBase64 } },
-        { type: 'text', text: 'Analiza esta imagen de recibo. Extrae JSON: {"type":"venta|gasto|desconocido","monto":numero,"proveedor":"nombre","descripcion":"texto","productos":["lista"]}. Si no es recibo, type:"desconocido". Solo JSON.' }
+        { type: 'text', text: "Analiza esta imagen de recibo. Extrae JSON: {\"type\":\"venta|gasto|desconocido\",\"monto\":numero,\"proveedor\":\"nombre\",\"descripcion\":\"texto\",\"productos\":[\"lista\"]}. Si no es recibo, type:\"desconocido\". Solo JSON." }
       ]}],
       max_tokens: 300
     }, { headers: { Authorization: 'Bearer ' + MINIMAX_API_KEY, 'Content-Type': 'application/json' }, timeout: 20000 });
