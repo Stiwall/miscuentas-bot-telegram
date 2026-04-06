@@ -183,6 +183,7 @@ startWeeklyReminder();
 const K_PAYMENT = { reply_markup: JSON.stringify({ keyboard: [['💵 Efectivo', '📋 CxC'], ['💳 Tarjeta', '🏦 Transferencia'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
 const K_YES_NO = { reply_markup: JSON.stringify({ keyboard: [['✅ Sí, agregar otro', '✅ No, continuar'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
 const K_CONFIRM = { reply_markup: JSON.stringify({ keyboard: [['✅ Confirmar'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
+const K_HIDE = { reply_markup: JSON.stringify({ remove_keyboard: true }) };
 const K_CANCEL = { reply_markup: JSON.stringify({ keyboard: [['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
 const K_REPORT = { reply_markup: JSON.stringify({ keyboard: [['📅 Diario', '📆 Semanal'], ['🗓️ Mensual', '🔒 Cierre de Mes'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
 const K_PHOTO = { reply_markup: JSON.stringify({ keyboard: [['✅ Sí, registrar'], ['❌ No, cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
@@ -464,7 +465,7 @@ async function handleStateMessage(chatId, text) {
           date: new Date().toISOString().split('T')[0], payment_method: s.context.paymentMethod, status: 'issued'
         }, chatId);
         if (inv.error) { await bot.sendMessage(chatId, '❌ ' + inv.error); resetSession(chatId); return true; }
-        await bot.sendMessage(chatId, '✅ *VENTA REGISTRADA*\n\n📄 ' + (inv.invoice_number || inv.id) + '\n👤 ' + s.context.client + '\n💰 ' + fmt(amount) + '\n💳 ' + getPaymentLabel(s.context.paymentMethod), { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, '✅ *VENTA REGISTRADA*\n\n📄 ' + (inv.invoice_number || inv.id) + '\n👤 ' + s.context.client + '\n💰 ' + fmt(amount) + '\n💳 ' + getPaymentLabel(s.context.paymentMethod), { parse_mode: 'Markdown', ...K_HIDE });
         resetSession(chatId); return true;
       }
       await bot.sendMessage(chatId, '❌ Cancelada.'); resetSession(chatId); return true;
@@ -534,11 +535,11 @@ async function handleStateMessage(chatId, text) {
         await bot.sendMessage(chatId, '⏳...');
         const result = await processSaleFull(chatId, s.context);
         if (!result.success) { await bot.sendMessage(chatId, '❌ ' + result.error); resetSession(chatId); return true; }
-        await bot.sendMessage(chatId, result.message, { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, result.message, { parse_mode: 'Markdown', ...K_HIDE });
         const invData = await api('/api/invoices/' + result.invoice.id, 'GET', null, chatId);
         if (!invData.error && invData.items) {
           const receipt = receiptText(result.invoice, invData.items, s.context.client);
-          await bot.sendMessage(chatId, '🧾 *Factura ' + (result.invoice.invoice_number || result.invoice.id) + '*\n\n```' + receipt + '```', { parse_mode: 'Markdown' });
+          await bot.sendMessage(chatId, '🧾 *Factura ' + (result.invoice.invoice_number || result.invoice.id) + '*\n\n```' + receipt + '```', { parse_mode: 'Markdown', ...K_HIDE });
         }
         resetSession(chatId); return true;
       }
