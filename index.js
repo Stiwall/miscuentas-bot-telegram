@@ -235,8 +235,11 @@ async function handleStateMessage(chatId, text) {
           await bot.sendMessage(chatId, `🧾 *Factura ${result.invoice.invoice_number || result.invoice.id}*\n\n\`\`\`${receipt}\`\`\``, { parse_mode: 'Markdown' });
         }
         resetSession(chatId);
-      } else { await bot.sendMessage(chatId, '❌ Cancelada.'); resetSession(chatId); }
-      break;
+        // Sale complete — no further state transitions
+        return true;
+      } else {
+        await bot.sendMessage(chatId, '❌ Cancelada.'); resetSession(chatId); return true;
+      }
     }
 
     // ==================== /COBRAR FLOW ====================
