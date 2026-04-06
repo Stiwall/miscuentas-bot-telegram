@@ -778,7 +778,8 @@ bot.on('message', async (msg) => {
     '\n- "balance" → {"intent":"balance","confidence":0.9}' +
     '\n- "registrar gasto" → {"intent":"gasto","confidence":0.9}' +
     '\n- "cobrar" → {"intent":"cobrar","confidence":0.9}' +
-    '\n- "reporte" → {"intent":"reportes","confidence":0.85}';
+    '\n- "reporte" → {"intent":"reportes","confidence":0.85}' +
+    '\n\nImportante: NO interpretar CxC, credit, debit, tarjeta, efectivo, banco, transferencia, confirmar, cancelar como comandos. Estos son botones del flujo de venta/gasto/cobro.';
   const result = await groqChat(prompt);
   if (!result || result.intent === 'desconocido' || result.confidence < 0.4) {
     await bot.sendMessage(chatId, '❌ *No entendí.* Prueba: /venta /gasto /cobrar /reporte', { parse_mode: 'Markdown' });
