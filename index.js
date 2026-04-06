@@ -757,7 +757,10 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text.trim();
   const s = getSession(chatId);
-  if (s.state) { await handleStateMessage(chatId, text); return; }
+  
+  // Si hay un flujo activo, manejar directamente sin NLP
+  if (s.state && s.state !== 'idle') { await handleStateMessage(chatId, text); return; }
+  
   if (!s.token) {
     const saved = await loadSession(chatId);
     if (saved) { s.token = saved.jwt; s.plan = saved.plan; }
