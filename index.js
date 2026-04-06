@@ -12,7 +12,28 @@ const MINIMAX_VL_URL = 'https://api.minimax.io/anthropic/v1/chat/completions';
 const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 
 const userSessions = {};
+// Persistent session storage ( Railway ephemeral - sessions lost on restart without persistent disk )
+const SESSION_FILE = process.env.SESSION_FILE || '/tmp/miscuentas-bot-sessions.json';
 const userTokens = {};
+
+function loadSessions() {
+  try {
+    if (fs.existsSync(SESSION_FILE)) {
+      const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+      Object.assign(userTokens, data);
+      console.log('Loaded ' + Object.keys(userTokens).length + ' sessions from disk');
+    }
+  } catch (e) { console.error('Failed to load sessions:', e.message); }
+}
+
+function saveSessions() {
+  try {
+    fs.writeFileSync(SESSION_FILE, JSON.stringify(userTokens));
+  } catch (e) { console.error('Failed to save sessions:', e.message); }
+}
+
+// Load existing sessions on startup
+loadSessions();
 
 function getSession(chatId) {
   if (!userSessions[chatId]) userSessions[chatId] = { token: null, userId: null, state: null, context: {}, plan: null };
@@ -612,13 +633,13 @@ bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
     const s = getSession(chatId);
     s.token = r.data.token;
     s.userId = r.data.user?.id;
-    userTokens[chatId] = r.data.token;
+    userTokens[chatId] = r.data.token; saveSessions();
     try {
       const planRes = await axios.get(MISCUENTAS_API + '/api/auth/plan', { headers: { 'x-session-token': r.data.token } });
       const planData = planRes.data || {};
       s.plan = planData;
       if (!planData.bot_access && planData.plan?.toLowerCase() !== 'admin' && planData.plan_name !== 'Admin') {
-        delete userTokens[chatId];
+        delete userTokens[chatId]; saveSessions();
         await bot.sendMessage(chatId, '❌ *Acceso denegado al bot*\n\nPlan: ' + (planData.plan_name || planData.plan || 'trial') + '\n\n👉 miscuentas-contable.app/upgrade', { parse_mode: 'Markdown' });
         return;
       }
@@ -633,7 +654,7 @@ bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
 
 bot.onText(/\/logout/, async (msg) => {
   const chatId = msg.chat.id;
-  delete userTokens[chatId];
+  delete userTokens[chatId]; saveSessions();
   resetSession(chatId);
   await bot.sendMessage(chatId, '👋 *Sesion cerrada*', { parse_mode: 'Markdown' });
 });
