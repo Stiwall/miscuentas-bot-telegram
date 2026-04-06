@@ -613,7 +613,7 @@ async function handleStateMessage(chatId, text) {
       s.state = null;
       await bot.sendMessage(chatId, '⏳...');
       const r = await processExpenseFull(chatId, s.context);
-      await bot.sendMessage(chatId, r.success ? r.message : '❌ ' + r.error, { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, r.success ? r.message : '❌ ' + r.error, { parse_mode: 'Markdown', ...K_HIDE });
       resetSession(chatId); break;
     }
 
