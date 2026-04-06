@@ -771,7 +771,14 @@ bot.on('message', async (msg) => {
     }
     return;
   }
-  const prompt = 'Responde JSON: {"intent":"venta|gasto|cobrar|reportes|balance|deudas|productos|ayuda|desconocido","confidence":"0.0-1.0"}\nMensaje: "' + text + '"\nEjemplos:\n- "registra una venta" → {"intent":"venta","confidence":0.95}\n- "balance" → {"intent":"balance","confidence":0.9}\n- "registrar gasto" → {"intent":"gasto","confidence":0.9}\n- "cobrar" → {"intent":"cobrar","confidence":0.9}\n- "reporte" → {"intent":"reportes","confidence":0.85}';
+  const prompt = 'Responde JSON: {"intent":"venta|gasto|cobrar|reportes|balance|deudas|productos|ayuda|desconocido","confidence":"0.0-1.0"}' +
+    '\n\nMensaje: ' + text +
+    '\n\nEjemplos:' +
+    '\n- "registra una venta" → {"intent":"venta","confidence":0.95}' +
+    '\n- "balance" → {"intent":"balance","confidence":0.9}' +
+    '\n- "registrar gasto" → {"intent":"gasto","confidence":0.9}' +
+    '\n- "cobrar" → {"intent":"cobrar","confidence":0.9}' +
+    '\n- "reporte" → {"intent":"reportes","confidence":0.85}';
   const result = await groqChat(prompt);
   if (!result || result.intent === 'desconocido' || result.confidence < 0.4) {
     await bot.sendMessage(chatId, '❌ *No entendí.* Prueba: /venta /gasto /cobrar /reporte', { parse_mode: 'Markdown' });
