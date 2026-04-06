@@ -169,7 +169,7 @@ async function sendWeeklyReminder(chatId, token) {
 startMorningAlerts();
 startWeeklyReminder();
 
-const K_PAYMENT = { reply_markup: JSON.stringify({ keyboard: [['💵 Efectivo', '📋 CxC'], ['💳 Tarjeta', '🏦 Transferencia'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
+const K_PAYMENT = { reply_markup: JSON.stringify({ keyboard: [['💵 Efectivo', '💳 Crédito'], ['💳 Tarjeta', '🏦 Transferencia'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
 const K_YES_NO = { reply_markup: JSON.stringify({ keyboard: [['✅ Sí, agregar otro', '✅ No, continuar'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
 const K_CONFIRM = { reply_markup: JSON.stringify({ keyboard: [['✅ Confirmar'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
 const K_HIDE = { reply_markup: JSON.stringify({ remove_keyboard: true }) };
@@ -188,7 +188,7 @@ function receiptText(invoice, items, clientName) {
   return t;
 }
 
-function getPaymentLabel(m) { return { cash: '💵 Efectivo', credit: '📋 CxC', card: '💳 Tarjeta', bank: '🏦 Transferencia' }[m] || m; }
+function getPaymentLabel(m) { return { cash: '💵 Efectivo', credit: '💳 Crédito', card: '💳 Tarjeta', bank: '🏦 Transferencia' }[m] || m; }
 
 async function sendSaleSummary(chatId, ctx) {
   const items = ctx.items || [];
@@ -396,6 +396,8 @@ bot.on('photo', async (msg) => {
 // ==================== STATE MACHINE ====================
 async function handleStateMessage(chatId, text) {
   const s = getSession(chatId);
+  // Ensure token exists before processing state
+  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); resetSession(chatId); return true; }
   if (text === '❌ Cancelar') { resetSession(chatId); await bot.sendMessage(chatId, '❌ Cancelado.'); return true; }
   switch (s.state) {
 
@@ -427,7 +429,7 @@ async function handleStateMessage(chatId, text) {
     }
 
     case 'receipt_payment': {
-      const m = { '💵 Efectivo': 'cash', '📋 CxC': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
+      const m = { '💵 Efectivo': 'cash', '💳 Crédito': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
       const method = m[text];
       if (!method) { await bot.sendMessage(chatId, '⚠️ Selecciona:', { parse_mode: 'Markdown', ...K_PAYMENT }); return true; }
       s.context.paymentMethod = method;
@@ -517,7 +519,7 @@ async function handleStateMessage(chatId, text) {
     }
 
     case 'sale_payment': {
-      const m = { '💵 Efectivo': 'cash', '📋 CxC': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
+      const m = { '💵 Efectivo': 'cash', '💳 Crédito': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
       const method = m[text];
       if (!method) { await bot.sendMessage(chatId, '⚠️ Selecciona:', { parse_mode: 'Markdown', ...K_PAYMENT }); return true; }
       s.context.paymentMethod = method;
