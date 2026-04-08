@@ -759,6 +759,33 @@ bot.onText(/\/gasto/, async (msg) => {
   await bot.sendMessage(chatId, '💸 *REGISTRAR GASTO*\n\n💰 *Monto?*', { parse_mode: 'Markdown', ...K_CANCEL });
 });
 
+// Handle inline keyboard button clicks (callback_query)
+bot.on('callback_query', async (query) => {
+  const chatId = String(query.message?.chat?.id);
+  const data = query.data;
+  if (!chatId || !data) { try { await bot.answerCallbackQuery(query.id); } catch(e) {}; return; }
+  const s = getSession(chatId);
+  // Recover token from globalTokens if missing
+  if (!s.token && globalTokens.has(chatId)) {
+    if (!userSessions[chatId]) userSessions[chatId] = {};
+    userSessions[chatId].token = globalTokens.get(chatId);
+    s.token = userSessions[chatId].token;
+  }
+  // If still no token, answer with error
+  if (!s.token) {
+    try { await bot.answerCallbackQuery(query.id, { text: 'Primero /login' }); } catch(e) {}
+    return;
+  }
+  // If no active state, just acknowledge
+  if (!s.state || s.state === 'idle') {
+    try { await bot.answerCallbackQuery(query.id); } catch(e) {}
+    return;
+  }
+  // Process the callback data as if it were a text message in the current state
+  await handleStateMessage(chatId, data);
+  try { await bot.answerCallbackQuery(query.id); } catch(e) {}
+});
+
 bot.on('message', async (msg) => {
   if (!msg.text || msg.text.startsWith('/')) return;
   const chatId = msg.chat.id;
