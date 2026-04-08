@@ -1,6 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
-const axios = require('axios');
+const { loadSessionsFromDisk, saveSessionsToDisk } = require('./session_persist');
 const fs = require('fs');
+const axios = require('axios');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const MISCUENTAS_API = process.env.MISCUENTAS_API || 'https://miscuentas-contable-app-production.up.railway.app';
@@ -15,7 +16,7 @@ const bot = new TelegramBot(TELEGRAM_TOKEN, { polling: true });
 const globalTokens = new Map();  // chatId -> jwt token (persistent across calls)
 
 // Session storage - in-memory only (Railway configured with 1 replica to avoid state loss)
-const userSessions = {};  // chatId -> { token, userId, state, context, plan }
+const userSessions = loadSessionsFromDisk();  // chatId -> { token, userId, state, context, plan }
 const userTokens = {};    // chatId -> { jwt, plan } (backup reference)
 
 async function loadSessions() {
