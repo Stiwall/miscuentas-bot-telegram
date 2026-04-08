@@ -172,12 +172,12 @@ async function sendWeeklyReminder(chatId, token) {
 startMorningAlerts();
 startWeeklyReminder();
 
-const K_PAYMENT = { reply_markup: JSON.stringify({ keyboard: [['💵 Efectivo', '💳 Crédito'], ['💳 Tarjeta', '🏦 Transferencia'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
-const K_YES_NO = { reply_markup: JSON.stringify({ keyboard: [['✅ Sí, agregar otro', '✅ No, continuar'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
-const K_CONFIRM = { reply_markup: JSON.stringify({ keyboard: [['✅ Confirmar'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
-const K_HIDE = { reply_markup: JSON.stringify({ remove_keyboard: true }) };
-const K_CANCEL = { reply_markup: JSON.stringify({ keyboard: [['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
-const K_REPORT = { reply_markup: JSON.stringify({ keyboard: [['📅 Diario', '📆 Semanal'], ['🗓️ Mensual', '🔒 Cierre de Mes'], ['❌ Cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
+const K_PAYMENT = {}; // REMOVED KEYBOARD
+const K_YES_NO = {}; // REMOVED KEYBOARD
+const K_CONFIRM = {}; // REMOVED KEYBOARD
+const K_HIDE = {}; // REMOVED KEYBOARD
+const K_CANCEL = {}; // REMOVED KEYBOARD
+const K_REPORT = {}; // REMOVED KEYBOARD
 const K_PHOTO = { reply_markup: JSON.stringify({ keyboard: [['✅ Sí, registrar'], ['❌ No, cancelar']], one_time_keyboard: true, resize_keyboard: true }) };
 
 function receiptText(invoice, items, clientName) {
@@ -199,7 +199,7 @@ async function sendSaleSummary(chatId, ctx) {
   let msg = '📄 *FACTURA*\n\n👤 ' + ctx.client + '\n\n';
   items.forEach(i => { msg += '📦 ' + i.description + ' x' + i.qty + ' — ' + fmt(i.total) + '\n'; });
   msg += '\n─────────────\n💰 *Total: ' + fmt(subtotal) + '*\n💳 ' + getPaymentLabel(ctx.paymentMethod) + '\n\n¿Todo bien con esto?_';
-  await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...K_CONFIRM });
+  await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown',  });
 }
 
 async function processSaleFull(chatId, ctx) {
@@ -388,7 +388,7 @@ bot.on('photo', async (msg) => {
       (analysis.descripcion ? '📝 ' + analysis.descripcion + '\n' : '') +
       (analysis.productos?.length ? '📦 ' + analysis.productos.join(', ') + '\n' : '') +
       '\n_¿Registro esto?_',
-      { parse_mode: 'Markdown', ...K_PHOTO }
+      { parse_mode: 'Markdown',  }
     );
   } catch (e) {
     console.error('Photo error:', e.message);
@@ -397,28 +397,105 @@ bot.on('photo', async (msg) => {
 });
 
 // ==================== STATE MACHINE ====================
+
+// Interpret user text responses in flow states using Groq
+async function interpretFlowResponse(text, state, context) {
+  const lower = text.toLowerCase().trim();
+  const yesPhrases = ['si', 'sí', 'yes', 'yeah', 'dale', 'ok', 'perfecto', 'continuar', 'continua', 'siguiente', 'confirmar', 'si claro'];
+  const noPhrases = ['no', 'nah', 'nop', 'listo', 'terminar', 'fin', 'ya', 'cancelar', 'parar'];
+  const cancelPhrases = ['cancelar', 'parar', 'stop', 'abort'];
+  
+  // Cancel always works
+  if (cancelPhrases.some(p => lower.includes(p))) return { action: 'cancel' };
+  
+  // Payment method
+  if (state === 'sale_payment' || state === 'expense_payment' || state === 'receipt_payment') {
+    if (lower.includes('efectivo') || lower.includes('cash')) return { action: 'method', method: 'cash' };
+    if (lower.includes('crédit') || lower.includes('credito') || lower === 'crédito') return { action: 'method', method: 'credit' };
+    if (lower.includes('tarjeta') || lower.includes('débito') || lower.includes('debito')) return { action: 'method', method: 'card' };
+    if (lower.includes('transferencia') || lower.includes('banco') || lower.includes('bancario')) return { action: 'method', method: 'bank' };
+    if (lower.includes('cancelar')) return { action: 'cancel' };
+    return { action: 'retry' };
+  }
+  
+  // Yes/No
+  if (state === 'sale_add_more' || state === 'receipt_confirm' || state === 'cobrar_confirm') {
+    if (yesPhrases.some(p => lower === p || lower.includes(p))) return { action: 'yes' };
+    if (noPhrases.some(p => lower === p || lower.includes(p))) return { action: 'no' };
+    return { action: 'retry' };
+  }
+  
+  // Sale confirm
+  if (state === 'sale_confirm') {
+    if (yesPhrases.some(p => lower === p || lower.includes(p))) return { action: 'yes' };
+    if (noPhrases.some(p => lower === p || lower.includes(p))) return { action: 'no' };
+    return { action: 'retry' };
+  }
+  
+  // Quantity
+  if (state === 'sale_qty') {
+    const num = parseInt(text.replace(/[^\d]/g, ''));
+    if (num && num > 0) return { action: 'qty', qty: num };
+    return { action: 'retry' };
+  }
+  
+  // Amount
+  if (state === 'expense_amount' || state === 'cobrar_amount') {
+    const num = parseFloat(text.replace(/[^\d.]/g, ''));
+    if (num && num > 0) return { action: 'amount', amount: num };
+    return { action: 'retry' };
+  }
+  
+  // Client/Description/Vendor - just pass through
+  if (state === 'sale_client' || state === 'receipt_client' || state === 'cobrar_client' || state === 'expense_desc' || state === 'expense_vendor') {
+    return { action: 'text', value: text.trim() };
+  }
+  
+  // Product selection
+  if (state === 'sale_product') {
+    const num = parseInt(text);
+    if (num > 0 && context.products?.[num - 1]) return { action: 'select', product: context.products[num - 1] };
+    const found = context.products?.find(p => p.name.toLowerCase().includes(lower));
+    if (found) return { action: 'select', product: found };
+    return { action: 'new', name: text.trim() };
+  }
+  
+  // Report type
+  if (state === 'report_type') {
+    if (lower.includes('diario') || lower.includes('hoy')) return { action: 'report', type: 'daily' };
+    if (lower.includes('semanal')) return { action: 'report', type: 'weekly' };
+    if (lower.includes('mensual') || lower.includes('mes')) return { action: 'report', type: 'monthly' };
+    if (lower.includes('cierre')) return { action: 'report', type: 'cierre' };
+    return { action: 'retry' };
+  }
+  
+  return { action: 'text', value: text };
+}
+
 async function handleStateMessage(chatId, text) {
   const s = getSession(chatId);
   // Recover token from userTokens if missing from userSessions
   if (!s.token && userTokens[chatId]) s.token = userTokens[chatId].jwt;
   // Ensure token exists before processing state
   if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); resetSession(chatId); return true; }
-  if (text === '❌ Cancelar') { resetSession(chatId); await bot.sendMessage(chatId, '❌ Cancelado.'); return true; }
+  // Interpret user response using Groq/natural language
+  const flowResult = await interpretFlowResponse(text, s.state, s.context);
+  if (flowResult.action === 'cancel') { resetSession(chatId); await bot.sendMessage(chatId, '❌ Cancelado.'); return true; }
   switch (s.state) {
 
     case 'receipt_confirm': {
-      if (text.includes('Sí')) {
+      if (flowResult.action === 'yes') {
         const a = s.context.receiptAnalysis;
         if (a.type === 'gasto') {
           s.state = 'expense_desc';
           s.context.amount = a.monto;
           s.context.description = a.descripcion || a.proveedor || 'Gasto';
-          await bot.sendMessage(chatId, '💸 *Registrar gasto*\n\n💰 ' + fmt(a.monto) + '\n📝 ' + s.context.description + '\n\n🏪 *Proveedor?* (o "N/A")', { parse_mode: 'Markdown', ...K_CANCEL });
+          await bot.sendMessage(chatId, '💸 *Registrar gasto*\n\n💰 ' + fmt(a.monto) + '\n📝 ' + s.context.description + '\n\n🏪 *Proveedor?* (o "N/A")', { parse_mode: 'Markdown',  });
         } else {
           s.state = 'receipt_client';
           s.context.receiptData = a;
           await persistState(chatId);
-          await bot.sendMessage(chatId, '🧾 *Registrar venta*\n\n💰 ' + fmt(a.monto) + '\n' + (a.productos ? '📦 ' + a.productos.join(', ') + '\n' : '') + '\n👤 *Cliente?*', { parse_mode: 'Markdown', ...K_CANCEL });
+          await bot.sendMessage(chatId, '🧾 *Registrar venta*\n\n💰 ' + fmt(a.monto) + '\n' + (a.productos ? '📦 ' + a.productos.join(', ') + '\n' : '') + '\n👤 *Cliente?*', { parse_mode: 'Markdown',  });
         }
         return true;
       }
@@ -429,26 +506,24 @@ async function handleStateMessage(chatId, text) {
       s.context.client = text.trim();
       s.state = 'receipt_payment';
       await persistState(chatId);
-      await bot.sendMessage(chatId, '💳 *Metodo de pago?*', { parse_mode: 'Markdown', ...K_PAYMENT });
+      await bot.sendMessage(chatId, '💳 *Metodo de pago?*', { parse_mode: 'Markdown',  });
       return true;
     }
 
     case 'receipt_payment': {
-      const m = { '💵 Efectivo': 'cash', '💳 Crédito': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
-      const method = m[text];
-      if (!method) { await bot.sendMessage(chatId, '⚠️ Selecciona:', { parse_mode: 'Markdown', ...K_PAYMENT }); return true; }
-      s.context.paymentMethod = method;
+      if (flowResult.action !== 'method') { await bot.sendMessage(chatId, '⚠️ Escribe: efectivo, crédito, tarjeta o transferencia', { parse_mode: 'Markdown' }); return true; }
+      s.context.paymentMethod = flowResult.method;
       s.state = 'receipt_confirm_sale';
       await persistState(chatId);
       await bot.sendMessage(chatId,
         '📄 *Resumen*\n\n👤 ' + s.context.client + '\n💰 ' + fmt(s.context.receiptData?.monto) + '\n💳 ' + text + '\n\n¿Todo bien con esto?_',
-        { parse_mode: 'Markdown', ...K_CONFIRM }
+        { parse_mode: 'Markdown',  }
       );
       return true;
     }
 
     case 'receipt_confirm_sale': {
-      if (text === '✅ Confirmar') {
+      if (flowResult.action === 'yes') {
         await bot.sendMessage(chatId, '⏳...');
         const clients = await api('/api/clients', 'GET', null, chatId);
         let clientId = null;
@@ -464,7 +539,7 @@ async function handleStateMessage(chatId, text) {
           date: new Date().toISOString().split('T')[0], payment_method: s.context.paymentMethod, status: 'issued'
         }, chatId);
         if (inv.error) { await bot.sendMessage(chatId, '❌ ' + inv.error); resetSession(chatId); return true; }
-        await bot.sendMessage(chatId, '✅ *VENTA REGISTRADA*\n\n📄 ' + (inv.invoice_number || inv.id) + '\n👤 ' + s.context.client + '\n💰 ' + fmt(amount) + '\n💳 ' + getPaymentLabel(s.context.paymentMethod), { parse_mode: 'Markdown', ...K_HIDE });
+        await bot.sendMessage(chatId, '✅ *VENTA REGISTRADA*\n\n📄 ' + (inv.invoice_number || inv.id) + '\n👤 ' + s.context.client + '\n💰 ' + fmt(amount) + '\n💳 ' + getPaymentLabel(s.context.paymentMethod), { parse_mode: 'Markdown',  });
         resetSession(chatId); return true;
       }
       await bot.sendMessage(chatId, '❌ Cancelada.'); resetSession(chatId); return true;
@@ -481,8 +556,8 @@ async function handleStateMessage(chatId, text) {
         let msg = '📦 *¿Qué vendiste?*\n\n';
         prods.slice(0, 15).forEach((p, i) => { msg += (i + 1) + '. ' + p.name + '\n'; });
         msg += '\n_O escribe_';
-        await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...K_CANCEL });
-      } else { s.context.products = []; await bot.sendMessage(chatId, '📝 *Nombre del producto:*', { parse_mode: 'Markdown', ...K_CANCEL }); }
+        await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown',  });
+      } else { s.context.products = []; await bot.sendMessage(chatId, '📝 *Nombre del producto:*', { parse_mode: 'Markdown',  }); }
       break;
     }
 
@@ -496,7 +571,7 @@ async function handleStateMessage(chatId, text) {
       s.context.pendingProductPrice = parseFloat(prod.sale_price || prod.price) || 0;
       s.state = 'sale_qty';
       await persistState(chatId);
-      await bot.sendMessage(chatId, '📦 *' + prod.name + '*\n\n¿Cantidad?', { parse_mode: 'Markdown', ...K_CANCEL });
+      await bot.sendMessage(chatId, '📦 *' + prod.name + '*\n\n¿Cantidad?', { parse_mode: 'Markdown',  });
       break;
     }
 
@@ -508,26 +583,24 @@ async function handleStateMessage(chatId, text) {
       s.context.items.push({ product_id: s.context.pendingProductId, description: s.context.pendingProduct, qty, price, total: qty * price });
       s.state = 'sale_add_more';
       await persistState(chatId);
-      await bot.sendMessage(chatId, '✅ ' + s.context.pendingProduct + ' x' + qty + ' — ' + fmt(qty * price) + '\n\n¿Vendiste algo más?', { parse_mode: 'Markdown', ...K_YES_NO });
+      await bot.sendMessage(chatId, '✅ ' + s.context.pendingProduct + ' x' + qty + ' — ' + fmt(qty * price) + '\n\n¿Vendiste algo más?', { parse_mode: 'Markdown',  });
       break;
     }
 
     case 'sale_add_more': {
-      if (text.includes('Sí')) {
+      if (flowResult.action === 'yes') {
         s.state = 'sale_product';
         await persistState(chatId);
         let msg = '📦 *Siguiente?*\n\n';
         s.context.products?.slice(0, 15).forEach((p, i) => { msg += (i + 1) + '. ' + p.name + '\n'; });
-        await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...K_CANCEL });
-      } else { s.state = 'sale_payment'; await persistState(chatId); await bot.sendMessage(chatId, '💳 *Metodo de pago?*', { parse_mode: 'Markdown', ...K_PAYMENT }); }
+        await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown',  });
+      } else { s.state = 'sale_payment'; await persistState(chatId); await bot.sendMessage(chatId, '💳 *Metodo de pago?*', { parse_mode: 'Markdown',  }); }
       break;
     }
 
     case 'sale_payment': {
-      const m = { '💵 Efectivo': 'cash', '💳 Crédito': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
-      const method = m[text];
-      if (!method) { await bot.sendMessage(chatId, '⚠️ Selecciona:', { parse_mode: 'Markdown', ...K_PAYMENT }); return true; }
-      s.context.paymentMethod = method;
+      if (flowResult.action !== 'method') { await bot.sendMessage(chatId, '⚠️ Escribe: efectivo, crédito, tarjeta o transferencia', { parse_mode: 'Markdown' }); return true; }
+      s.context.paymentMethod = flowResult.method;
       s.state = 'sale_confirm';
       await persistState(chatId);
       await sendSaleSummary(chatId, s.context);
@@ -535,15 +608,15 @@ async function handleStateMessage(chatId, text) {
     }
 
     case 'sale_confirm': {
-      if (text === '✅ Confirmar') {
+      if (flowResult.action === 'yes') {
         await bot.sendMessage(chatId, '⏳...');
         const result = await processSaleFull(chatId, s.context);
         if (!result.success) { await bot.sendMessage(chatId, '❌ ' + result.error); resetSession(chatId); return true; }
-        await bot.sendMessage(chatId, result.message, { parse_mode: 'Markdown', ...K_HIDE });
+        await bot.sendMessage(chatId, result.message, { parse_mode: 'Markdown',  });
         const invData = await api('/api/invoices/' + result.invoice.id, 'GET', null, chatId);
         if (!invData.error && invData.items) {
           const receipt = receiptText(result.invoice, invData.items, s.context.client);
-          await bot.sendMessage(chatId, '🧾 *Factura ' + (result.invoice.invoice_number || result.invoice.id) + '*\n\n```' + receipt + '```', { parse_mode: 'Markdown', ...K_HIDE });
+          await bot.sendMessage(chatId, '🧾 *Factura ' + (result.invoice.invoice_number || result.invoice.id) + '*\n\n```' + receipt + '```', { parse_mode: 'Markdown',  });
         }
         resetSession(chatId); return true;
       }
@@ -562,7 +635,7 @@ async function handleStateMessage(chatId, text) {
       msg += '\n💰 *¿Cuanto pago?*';
       s.state = 'cobrar_amount';
       await persistState(chatId);
-      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...K_CANCEL });
+      await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown',  });
       break;
     }
 
@@ -573,12 +646,12 @@ async function handleStateMessage(chatId, text) {
       s.context.payRecId = s.context.clientRecs[0]?.id;
       s.state = 'cobrar_confirm';
       await persistState(chatId);
-      await bot.sendMessage(chatId, '💰 *' + fmt(amt) + '\n\n¿Todo bien con esto?', { parse_mode: 'Markdown', ...K_CONFIRM });
+      await bot.sendMessage(chatId, '💰 *' + fmt(amt) + '\n\n¿Todo bien con esto?', { parse_mode: 'Markdown',  });
       break;
     }
 
     case 'cobrar_confirm': {
-      if (text === '✅ Confirmar') {
+      if (flowResult.action === 'yes') {
         await bot.sendMessage(chatId, '⏳...');
         let payment = await api('/api/receivables/' + s.context.payRecId + '/payments', 'POST', { amount: s.context.payAmount, date: new Date().toISOString().split('T')[0], notes: 'Via Telegram' }, chatId);
         if (payment.error) payment = await api('/api/receivable-payments', 'POST', { receivable_id: s.context.payRecId, amount: s.context.payAmount, date: new Date().toISOString().split('T')[0] }, chatId);
@@ -593,33 +666,31 @@ async function handleStateMessage(chatId, text) {
       if (!amt || amt <= 0) { await bot.sendMessage(chatId, '⚠️ Inválido:'); return true; }
       s.context.amount = amt;
       s.state = 'expense_desc';
-      await bot.sendMessage(chatId, '💰 ' + fmt(amt) + '\n\n📝 *Descripcion?*', { parse_mode: 'Markdown', ...K_CANCEL });
+      await bot.sendMessage(chatId, '💰 ' + fmt(amt) + '\n\n📝 *Descripcion?*', { parse_mode: 'Markdown',  });
       break;
     }
 
     case 'expense_desc': {
       s.context.description = text.trim();
       s.state = 'expense_vendor';
-      await bot.sendMessage(chatId, '📝 ' + s.context.description + '\n\n🏪 *Proveedor?* (o "N/A")', { parse_mode: 'Markdown', ...K_CANCEL });
+      await bot.sendMessage(chatId, '📝 ' + s.context.description + '\n\n🏪 *Proveedor?* (o "N/A")', { parse_mode: 'Markdown',  });
       break;
     }
 
     case 'expense_vendor': {
       s.context.vendor = text.trim();
       s.state = 'expense_payment';
-      await bot.sendMessage(chatId, '🏪 ' + s.context.vendor + '\n💰 ' + fmt(s.context.amount) + '\n\n💳 *Metodo?*', { parse_mode: 'Markdown', ...K_PAYMENT });
+      await bot.sendMessage(chatId, '🏪 ' + s.context.vendor + '\n💰 ' + fmt(s.context.amount) + '\n\n💳 *Metodo?*', { parse_mode: 'Markdown',  });
       break;
     }
 
     case 'expense_payment': {
-      const m = { '💵 Efectivo': 'cash', '📋 CxP': 'credit', '💳 Tarjeta': 'card', '🏦 Transferencia': 'bank' };
-      const method = m[text];
-      if (!method) { await bot.sendMessage(chatId, '⚠️ Selecciona:'); return true; }
-      s.context.paymentMethod = method;
+      if (flowResult.action !== 'method') { await bot.sendMessage(chatId, '⚠️ Escribe: efectivo, crédito, tarjeta o transferencia'); return true; }
+      s.context.paymentMethod = flowResult.method;
       s.state = null;
       await bot.sendMessage(chatId, '⏳...');
       const r = await processExpenseFull(chatId, s.context);
-      await bot.sendMessage(chatId, r.success ? r.message : '❌ ' + r.error, { parse_mode: 'Markdown', ...K_HIDE });
+      await bot.sendMessage(chatId, r.success ? r.message : '❌ ' + r.error, { parse_mode: 'Markdown',  });
       resetSession(chatId); break;
     }
 
@@ -725,7 +796,7 @@ bot.onText(/\/reporte/, async (msg) => {
   const s = getSession(chatId);
   if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
   s.state = 'report_type';
-  await bot.sendMessage(chatId, '📊 *Que reporte?*', { parse_mode: 'Markdown', ...K_REPORT });
+  await bot.sendMessage(chatId, '📊 *Que reporte?*', { parse_mode: 'Markdown',  });
 });
 
 bot.onText(/\/cobrar/, async (msg) => {
@@ -735,7 +806,7 @@ bot.onText(/\/cobrar/, async (msg) => {
   if (!canUse(chatId, 'cobrar')) { await bot.sendMessage(chatId, planMsg(chatId)); return; }
   resetSession(chatId);
   s.state = 'cobrar_client';
-  await bot.sendMessage(chatId, '💰 *Registrar pago CxC*\n\n👤 *Nombre del cliente?*', { parse_mode: 'Markdown', ...K_CANCEL });
+  await bot.sendMessage(chatId, '💰 *Registrar pago CxC*\n\n👤 *Nombre del cliente?*', { parse_mode: 'Markdown',  });
 });
 
 bot.onText(/\/venta/, async (msg) => {
@@ -746,7 +817,7 @@ bot.onText(/\/venta/, async (msg) => {
   resetSession(chatId);
   s.context.items = [];
   s.state = 'sale_client';
-  await bot.sendMessage(chatId, '🧾 *REGISTRAR VENTA*\n\n👤 *Nombre del cliente?*', { parse_mode: 'Markdown', ...K_CANCEL });
+  await bot.sendMessage(chatId, '🧾 *REGISTRAR VENTA*\n\n👤 *Nombre del cliente?*', { parse_mode: 'Markdown',  });
 });
 
 bot.onText(/\/gasto/, async (msg) => {
@@ -756,7 +827,7 @@ bot.onText(/\/gasto/, async (msg) => {
   if (!canUse(chatId, 'gasto')) { await bot.sendMessage(chatId, planMsg(chatId)); return; }
   resetSession(chatId);
   s.state = 'expense_amount';
-  await bot.sendMessage(chatId, '💸 *REGISTRAR GASTO*\n\n💰 *Monto?*', { parse_mode: 'Markdown', ...K_CANCEL });
+  await bot.sendMessage(chatId, '💸 *REGISTRAR GASTO*\n\n💰 *Monto?*', { parse_mode: 'Markdown',  });
 });
 
 // Handle inline keyboard button clicks (callback_query)
@@ -830,10 +901,10 @@ bot.on('message', async (msg) => {
     return;
   }
   switch (result.intent) {
-    case 'venta': if (canUse(chatId, 'venta')) { resetSession(chatId); s.context.items = []; s.state = 'sale_client'; await bot.sendMessage(chatId, '🧾 *VENTA*\n\n¿A quién le vendiste?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
-    case 'gasto': if (canUse(chatId, 'gasto')) { resetSession(chatId); s.state = 'expense_amount'; await bot.sendMessage(chatId, '💸 *GASTO*\n\n💰 Monto?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
-    case 'cobrar': if (canUse(chatId, 'cobrar')) { resetSession(chatId); s.state = 'cobrar_client'; await bot.sendMessage(chatId, '💰 *COBRAR*\n\n👤 Cliente?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
-    case 'reportes': s.state = 'report_type'; await bot.sendMessage(chatId, '📊 *Reporte?*', { parse_mode: 'Markdown', ...K_REPORT }); break;
+    case 'venta': if (canUse(chatId, 'venta')) { resetSession(chatId); s.context.items = []; s.state = 'sale_client'; await bot.sendMessage(chatId, '🧾 *VENTA*\n\n¿A quién le vendiste?', { parse_mode: 'Markdown',  }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
+    case 'gasto': if (canUse(chatId, 'gasto')) { resetSession(chatId); s.state = 'expense_amount'; await bot.sendMessage(chatId, '💸 *GASTO*\n\n💰 Monto?', { parse_mode: 'Markdown',  }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
+    case 'cobrar': if (canUse(chatId, 'cobrar')) { resetSession(chatId); s.state = 'cobrar_client'; await bot.sendMessage(chatId, '💰 *COBRAR*\n\n👤 Cliente?', { parse_mode: 'Markdown',  }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
+    case 'reportes': s.state = 'report_type'; await bot.sendMessage(chatId, '📊 *Reporte?*', { parse_mode: 'Markdown',  }); break;
     case 'balance': await bot.sendMessage(chatId, '/balance'); break;
     case 'deudas': await bot.sendMessage(chatId, '/deudas'); break;
     case 'productos': await bot.sendMessage(chatId, '/productos'); break;
