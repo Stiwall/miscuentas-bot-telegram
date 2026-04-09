@@ -45,6 +45,11 @@ function saveSession(chatId, jwt, plan) {
   saveSessionsToDisk(userSessions);
 }
 
+function saveStateToDisk(chatId, session) {
+  userSessions[chatId] = { ...(userSessions[chatId] || {}), state: session.state, context: session.context };
+  saveSessionsToDisk(userSessions);
+}
+
 function deleteSession(chatId) {
   delete userSessions[chatId];
   delete userTokens[chatId];
@@ -348,8 +353,53 @@ bot.onText(/\/logout/, (msg) => {
 });
 
 bot.onText(/\/ayuda/, (msg) => cmdStart(msg.chat.id));
+bot.onText(/\/guia/, (msg) => cmdGuia(msg.chat.id));
 bot.onText(/\/programar/, (msg) => cmdProgramar(msg.chat.id));
 bot.onText(/\/desprogramar/, (msg) => cmdDesprogramar(msg.chat.id));
+
+// ─── GUIA DE COMANDOS ───────────────────────────────────────────────────────
+async function cmdGuia(chatId) {
+  const guia = `📘 *GUÍA DE COMANDOS*
+
+🔐 *Inicio*
+/login usuario contraseña — Conectarte a tu cuenta
+/logout — Cerrar sesión
+/guia — Ver esta guía
+
+📊 *Reportes*
+/balance — Resumen general de tu negocio
+/reportes diario — Ingresos y gastos de hoy
+/reportes semanal — Resumen de la semana
+/reportes mensual — Resumen del mes
+
+🔔 *Alertas*
+/alertas stock — Productos con inventario bajo
+/alertas pagos — Cuentas por cobrar o pagar
+
+👁️ *Monitoreo*
+/monitoreo — Dashboard completo del negocio
+
+📦 *Inventario*
+/entrada producto cantidad precio — Registrar mercancía
+  Ejemplo: /entrada chicharron 50 2500
+/productos — Ver todos tus productos
+
+📸 *Fotos de facturas*
+Envía una foto de tu factura de compra y extraigo los productos automáticamente.
+
+⏰ *Reportes automáticos*
+/programar — Activa reporte semanal cada lunes 8am
+/desprogramar — Desactiva el reporte automático
+
+💡 *También puedes escribir naturalmente:*
+"muéstrame el balance"
+"reporte mensual"
+"qué alertas tengo"
+"registra que llegó mercancía"
+"cómo estamos hoy"`;
+
+  await bot.sendMessage(chatId, guia, { parse_mode: 'Markdown' });
+}
 
 // Mensajes de texto libre - interpretación NLP
 bot.on('message', async (msg) => {
@@ -359,11 +409,68 @@ bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text.trim();
 
-  // Manejar fotos de facturas
+  // Manejar fotos de facturas para entrada de mercancía
   if (msg.photo) {
+    if (!requiresAuth(chatId)) return;
     await bot.sendMessage(chatId, '📸 Analizando factura...');
-    // TODO: Descargar foto y enviar a Groq para extraer datos
-    await bot.sendMessage(chatId, '🏗️ Esta función aún está en desarrollo. Por ahora registra la entrada con texto:\n/entrada producto cantidad precio');
+    try {
+      const photo = msg.photo[msg.photo.length - 1]; // highest resolution
+      const fileUrl = await bot.getFileLink(photo.file_id);
+      
+      // Use Groq to extract invoice data from image URL
+      const prompt = `Analiza esta imagen de factura/compra. Extrae y responde SOLO con JSON con este formato exacto, sin texto adicional:
+{"items":[{"name":"nombre del producto","qty":cantidad,"price":precio unitario,"total":total}],"vendor":"nombre del proveedor o comercio","total":total general,"date":"fecha si aparece"}`;
+      
+      const analysis = await groq(prompt, 'Extraes datos de facturas. Respondes SOLO con JSON válido.');
+      
+      if (!analysis) {
+        await bot.sendMessage(chatId, '❌ No pude analizar la factura. Intenta registrar con texto:\n/entrada producto cantidad precio');
+        return;
+      }
+      
+      let data;
+      try {
+        // Try to extract JSON from response
+        const jsonMatch = analysis.match(/\{[\s\S]*\}/);
+        data = jsonMatch ? JSON.parse(jsonMatch[0]) : null;
+      } catch {
+        data = null;
+      }
+      
+      if (!data || !data.items || !Array.isArray(data.items)) {
+        await bot.sendMessage(chatId, '❌ No pude entender la factura. Intenta:\n/entrada producto cantidad precio');
+        return;
+      }
+      
+      // Save parsed data to session context for confirmation flow
+      const s = getSession(chatId);
+      s.state = 'invoice_confirm';
+      s.context.invoiceData = data;
+      saveStateToDisk(chatId, s);
+      
+      let preview = `📋 *Datos extraídos de factura*
+
+`;
+      preview += `🏪 ${data.vendor || 'Sin proveedor'}
+`;
+      preview += `📅 ${data.date || 'Sin fecha'}
+
+`;
+      data.items.slice(0, 10).forEach((item, i) => {
+        preview += `${i+1}. ${item.name} x${item.qty} = RD$ ${item.total?.toLocaleString() || (item.qty * item.price)?.toLocaleString()}
+`;
+      });
+      if (data.total) preview += `
+💰 *Total: RD$ ${data.total.toLocaleString()}*`;
+      preview += `
+
+_¿Confirmar estos productos? (sí/no)_`;
+      
+      await bot.sendMessage(chatId, preview, { parse_mode: 'Markdown' });
+    } catch (e) {
+      console.error('Invoice photo error:', e);
+      await bot.sendMessage(chatId, '❌ Error al procesar la foto. Usa:\n/entrada producto cantidad precio');
+    }
     return;
   }
 
