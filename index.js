@@ -468,20 +468,20 @@ async function cmdProgramar(chatId) {
   saveSchedule();
 
   if (wasEnabled) {
-    await bot.sendMessage(chatId, '✅ *Reporte semanal ya estaba programado.*
+    await bot.sendMessage(chatId, `✅ *Reporte semanal ya estaba programado.*
 
 Cada lunes a las 8am (hora RD) te envío tu resumen semanal.
 
-¿Cambiar algo? Escríbeme.');
+¿Cambiar algo? Escríbeme.`);
   } else {
-    await bot.sendMessage(chatId, '✅ *Reporte semanal activado!*
+    await bot.sendMessage(chatId, `✅ *Reporte semanal activado!*
 
 Cada lunes a las 8am (hora RD) te envío:
 • Ingresos de la semana
 • Gastos
 • Ganancia neta
 
-Primer reporte: próximo lunes.');
+Primer reporte: próximo lunes.`);
   }
 }
 
