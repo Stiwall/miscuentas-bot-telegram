@@ -1,6 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const { loadSessionsFromDisk, saveSessionsToDisk } = require('./session_persist');
 const axios = require('axios');
+const fs = require('fs');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const MISCUENTAS_API = process.env.MISCUENTAS_API || 'https://miscuentas-contable-app-production.up.railway.app';
@@ -347,6 +348,8 @@ bot.onText(/\/logout/, (msg) => {
 });
 
 bot.onText(/\/ayuda/, (msg) => cmdStart(msg.chat.id));
+bot.onText(/\/programar/, (msg) => cmdProgramar(msg.chat.id));
+bot.onText(/\/desprogramar/, (msg) => cmdDesprogramar(msg.chat.id));
 
 // Mensajes de texto libre - interpretación NLP
 bot.on('message', async (msg) => {
@@ -391,5 +394,109 @@ bot.on('message', async (msg) => {
       );
   }
 });
+
+// ──────────────────────────────────────────────
+// PROGRAMADOR DE REPORTES SEMANALES
+// ──────────────────────────────────────────────
+
+const SCHEDULE_FILE = './report_schedule.json';
+const REPORT_HOUR = 8; // 8am hora RD (UTC-4)
+const REPORT_DAY = 1;   // Lunes (0=Dom, 1=Lun, ..., 6=Sáb)
+
+let reportSchedule = {};
+
+function loadSchedule() {
+  try {
+    const data = fs.readFileSync(SCHEDULE_FILE, 'utf8');
+    reportSchedule = JSON.parse(data);
+  } catch {
+    reportSchedule = {};
+  }
+}
+
+function saveSchedule() {
+  fs.writeFileSync(SCHEDULE_FILE, JSON.stringify(reportSchedule, null, 2));
+}
+
+function isReportTime() {
+  const now = new Date();
+  const rdTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/Santo_Domingo' }));
+  return rdTime.getDay() === REPORT_DAY && rdTime.getHours() === REPORT_HOUR && now.getMinutes() < 5;
+}
+
+async function sendWeeklyReport(chatId) {
+  const token = getToken(chatId);
+  if (!token) return;
+
+  await bot.sendMessage(chatId, '📊 *Reporte Semanal — Generando...*', { parse_mode: 'Markdown' });
+
+  const r = await api('/api/reports/weekly', 'GET', null, chatId);
+  if (r.error) { await bot.sendMessage(chatId, '❌ No pude generar el reporte.'); return; }
+
+  const rdNow = new Date().toLocaleString('es-DO', { timeZone: 'America/Santo_Domingo', weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+
+  let msg = `📅 *Reporte Semanal — ${rdNow}*
+
+`;
+  msg += `💰 Ingresos: ${fmt(r.totalIncome || 0)}\n`;
+  msg += `💸 Gastos: ${fmt(r.totalExpenses || 0)}\n`;
+  msg += `📈 Ganancia Neta: *${fmt(r.netIncome || 0)}*\n\n`;
+  msg += `Ventas registradas: ${r.salesCount || 0}\n`;
+  msg += `Gastos registrados: ${r.expensesCount || 0}`;
+
+  await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown' });
+}
+
+function startScheduler() {
+  // Revisar cada minuto si es hora del reporte
+  setInterval(async () => {
+    if (!isReportTime()) return;
+
+    const subscribers = Object.keys(reportSchedule).filter(uid => reportSchedule[uid]?.enabled);
+    if (subscribers.length === 0) return;
+
+    console.log('📊 Enviando reportes semanales a', subscribers.length, 'suscriptores');
+    for (const chatId of subscribers) {
+      await sendWeeklyReport(chatId).catch(() => {});
+    }
+  }, 60 * 1000); // cada minuto
+}
+
+async function cmdProgramar(chatId) {
+  const wasEnabled = reportSchedule[chatId]?.enabled;
+  reportSchedule[chatId] = { enabled: true, day: 'monday', hour: 8, updatedAt: new Date().toISOString() };
+  saveSchedule();
+
+  if (wasEnabled) {
+    await bot.sendMessage(chatId, '✅ *Reporte semanal ya estaba programado.*
+
+Cada lunes a las 8am (hora RD) te envío tu resumen semanal.
+
+¿Cambiar algo? Escríbeme.');
+  } else {
+    await bot.sendMessage(chatId, '✅ *Reporte semanal activado!*
+
+Cada lunes a las 8am (hora RD) te envío:
+• Ingresos de la semana
+• Gastos
+• Ganancia neta
+
+Primer reporte: próximo lunes.');
+  }
+}
+
+async function cmdDesprogramar(chatId) {
+  if (!reportSchedule[chatId]?.enabled) {
+    await bot.sendMessage(chatId, 'No tenías reportes programados.');
+    return;
+  }
+  reportSchedule[chatId].enabled = false;
+  saveSchedule();
+  await bot.sendMessage(chatId, '🛑 Reportes semanales desactivados.');
+}
+
+// Iniciar scheduler al cargar
+loadSchedule();
+startScheduler();
 
 console.log('✅ MisCuentas Bot iniciado - 4 funciones: Reportes, Alertas, Monitoreo, Entrada');
