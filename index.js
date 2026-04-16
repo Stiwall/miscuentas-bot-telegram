@@ -1,6 +1,7 @@
 const TelegramBot = require('node-telegram-bot-api');
 const axios = require('axios');
 const fs = require('fs');
+const R = require('./src/generators/responseGenerator');
 
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const MISCUENTAS_API = process.env.MISCUENTAS_API || 'https://miscuentas-contable-app-production.up.railway.app';
@@ -361,7 +362,7 @@ async function sendReport(chatId, kind) {
 bot.on('photo', async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+  if (!s.token) { await bot.sendMessage(chatId, R.loginRequired()); return; }
   if (!canUse(chatId, 'photo_receipt')) { await bot.sendMessage(chatId, planMsg(chatId)); return; }
   await bot.sendMessage(chatId, '📸 *Analizando...*', { parse_mode: 'Markdown' });
   try {
@@ -402,8 +403,8 @@ async function handleStateMessage(chatId, text) {
   // Recover token from userTokens if missing from userSessions
   if (!s.token && userTokens[chatId]) s.token = userTokens[chatId].jwt;
   // Ensure token exists before processing state
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); resetSession(chatId); return true; }
-  if (text === '❌ Cancelar') { resetSession(chatId); await bot.sendMessage(chatId, '❌ Cancelado.'); return true; }
+  if (!s.token) { await bot.sendMessage(chatId, R.loginRequired()); resetSession(chatId); return true; }
+  if (text === '❌ Cancelar') { resetSession(chatId); await bot.sendMessage(chatId, R.cancelled()); return true; }
   switch (s.state) {
 
     case 'receipt_confirm': {
@@ -464,7 +465,7 @@ async function handleStateMessage(chatId, text) {
           date: new Date().toISOString().split('T')[0], payment_method: s.context.paymentMethod, status: 'issued'
         }, chatId);
         if (inv.error) { await bot.sendMessage(chatId, '❌ ' + inv.error); resetSession(chatId); return true; }
-        await bot.sendMessage(chatId, '✅ *VENTA REGISTRADA*\n\n📄 ' + (inv.invoice_number || inv.id) + '\n👤 ' + s.context.client + '\n💰 ' + fmt(amount) + '\n💳 ' + getPaymentLabel(s.context.paymentMethod), { parse_mode: 'Markdown', ...K_HIDE });
+        await bot.sendMessage(chatId, R.saleConfirmed(inv.invoice_number || inv.id, s.context.client, amount, getPaymentLabel(s.context.paymentMethod)), { parse_mode: 'Markdown', ...K_HIDE });
         resetSession(chatId); return true;
       }
       await bot.sendMessage(chatId, '❌ Cancelada.'); resetSession(chatId); return true;
@@ -474,15 +475,12 @@ async function handleStateMessage(chatId, text) {
       s.context.client = text.trim();
       s.state = 'sale_product';
       await persistState(chatId);
-      await bot.sendMessage(chatId, '⏳...');
+      await bot.sendMessage(chatId, R.loading());
       const prods = await api('/api/products', 'GET', null, chatId);
       if (Array.isArray(prods) && prods.length > 0) {
         s.context.products = prods;
-        let msg = '📦 *¿Qué vendiste?*\n\n';
-        prods.slice(0, 15).forEach((p, i) => { msg += (i + 1) + '. ' + p.name + '\n'; });
-        msg += '\n_O escribe_';
-        await bot.sendMessage(chatId, msg, { parse_mode: 'Markdown', ...K_CANCEL });
-      } else { s.context.products = []; await bot.sendMessage(chatId, '📝 *Nombre del producto:*', { parse_mode: 'Markdown', ...K_CANCEL }); }
+        await bot.sendMessage(chatId, R.askSaleProduct(prods), { parse_mode: 'Markdown', ...K_CANCEL });
+      } else { s.context.products = []; await bot.sendMessage(chatId, R.askSaleProduct([]), { parse_mode: 'Markdown', ...K_CANCEL }); }
       break;
     }
 
@@ -496,7 +494,7 @@ async function handleStateMessage(chatId, text) {
       s.context.pendingProductPrice = parseFloat(prod.sale_price || prod.price) || 0;
       s.state = 'sale_qty';
       await persistState(chatId);
-      await bot.sendMessage(chatId, '📦 *' + prod.name + '*\n\n¿Cantidad?', { parse_mode: 'Markdown', ...K_CANCEL });
+      await bot.sendMessage(chatId, R.askQty(prod.name), { parse_mode: 'Markdown', ...K_CANCEL });
       break;
     }
 
@@ -508,7 +506,7 @@ async function handleStateMessage(chatId, text) {
       s.context.items.push({ product_id: s.context.pendingProductId, description: s.context.pendingProduct, qty, price, total: qty * price });
       s.state = 'sale_add_more';
       await persistState(chatId);
-      await bot.sendMessage(chatId, '✅ ' + s.context.pendingProduct + ' x' + qty + ' — ' + fmt(qty * price) + '\n\n¿Vendiste algo más?', { parse_mode: 'Markdown', ...K_YES_NO });
+      await bot.sendMessage(chatId, R.addMoreItems(), { parse_mode: 'Markdown', ...K_YES_NO });
       break;
     }
 
@@ -547,7 +545,7 @@ async function handleStateMessage(chatId, text) {
         }
         resetSession(chatId); return true;
       }
-      await bot.sendMessage(chatId, '❌ Cancelada.'); resetSession(chatId); return true;
+      await bot.sendMessage(chatId, R.saleCancelled()); resetSession(chatId); return true;
     }
 
     case 'cobrar_client': {
@@ -583,24 +581,24 @@ async function handleStateMessage(chatId, text) {
         let payment = await api('/api/receivables/' + s.context.payRecId + '/payments', 'POST', { amount: s.context.payAmount, date: new Date().toISOString().split('T')[0], notes: 'Via Telegram' }, chatId);
         if (payment.error) payment = await api('/api/receivable-payments', 'POST', { receivable_id: s.context.payRecId, amount: s.context.payAmount, date: new Date().toISOString().split('T')[0] }, chatId);
         if (payment.error) { await bot.sendMessage(chatId, '❌ ' + payment.error); resetSession(chatId); return true; }
-        await bot.sendMessage(chatId, '✅ *PAGO REGISTRADO*\n\n👤 ' + s.context.clientName + '\n💰 ' + fmt(s.context.payAmount), { parse_mode: 'Markdown' });
+        await bot.sendMessage(chatId, R.cobrarRegistered(s.context.clientName, s.context.payAmount), { parse_mode: 'Markdown' });
       } else { await bot.sendMessage(chatId, '❌ Cancelado.'); }
       resetSession(chatId); break;
     }
 
     case 'expense_amount': {
       const amt = parseFloat(text.replace(/[^\d.]/g, ''));
-      if (!amt || amt <= 0) { await bot.sendMessage(chatId, '⚠️ Inválido:'); return true; }
+      if (!amt || amt <= 0) { await bot.sendMessage(chatId, '⚠️ Monto inválido, ¿cuánto fue?'); return true; }
       s.context.amount = amt;
       s.state = 'expense_desc';
-      await bot.sendMessage(chatId, '💰 ' + fmt(amt) + '\n\n📝 *Descripcion?*', { parse_mode: 'Markdown', ...K_CANCEL });
+      await bot.sendMessage(chatId, R.askExpenseDesc(amt), { parse_mode: 'Markdown', ...K_CANCEL });
       break;
     }
 
     case 'expense_desc': {
       s.context.description = text.trim();
       s.state = 'expense_vendor';
-      await bot.sendMessage(chatId, '📝 ' + s.context.description + '\n\n🏪 *Proveedor?* (o "N/A")', { parse_mode: 'Markdown', ...K_CANCEL });
+      await bot.sendMessage(chatId, R.askExpenseVendor(s.context.description), { parse_mode: 'Markdown', ...K_CANCEL });
       break;
     }
 
@@ -644,7 +642,7 @@ bot.onText(/\/start/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
   resetSession(chatId);
-  await bot.sendMessage(chatId, '🐷 *MisCuentas Bot*\n\n' + (s.token ? '✅ Conectado' : '❌ Sin sesion') + '\n\n/venta /gasto /cobrar /reporte\n/balance /deudas /productos\n/login /logout', { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, '🐷 *MisCuentas*\n\n' + R.startMessage(!!s.token), { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
@@ -667,63 +665,60 @@ bot.onText(/\/login (.+) (.+)/, async (msg, m) => {
         await bot.sendMessage(chatId, '❌ *Acceso denegado al bot*\n\nPlan: ' + (planData.plan_name || planData.plan || 'trial') + '\n\n👉 miscuentas-contable.app/upgrade', { parse_mode: 'Markdown' });
         return;
       }
-      const trialInfo = planData.trial_active ? '\n\n📅 Trial: ' + planData.trial_days_left + ' dias restantes' : '';
-      await bot.sendMessage(chatId, '✅ *Sesion iniciada*\nPlan: ' + (planData.plan_name || 'Free') + trialInfo, { parse_mode: 'Markdown' });
+      const trialDays = planData.trial_active ? planData.trial_days_left : null;
+      await bot.sendMessage(chatId, R.loginSuccess(planData.plan_name || 'Free', trialDays), { parse_mode: 'Markdown' });
     } catch (e) {
       s.plan = { plan: 'trial', plan_name: 'Trial' };
-      await bot.sendMessage(chatId, '✅ *Sesion iniciada*', { parse_mode: 'Markdown' });
+      await bot.sendMessage(chatId, R.loginSuccess('Free', null), { parse_mode: 'Markdown' });
     }
-  } else { await bot.sendMessage(chatId, '❌ *Credenciales invalidas*', { parse_mode: 'Markdown' }); }
+  } else { await bot.sendMessage(chatId, R.loginFail(), { parse_mode: 'Markdown' }); }
 });
 
 bot.onText(/\/cancelar/, async (msg) => {
   const chatId = msg.chat.id;
   resetSession(chatId);
-  await bot.sendMessage(chatId, '❌ *Cancelado.*', { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, R.cancelled(), { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/logout/, async (msg) => {
   const chatId = msg.chat.id;
   await deleteSession(chatId);
   resetSession(chatId);
-  await bot.sendMessage(chatId, '👋 *Sesion cerrada*', { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, R.logoutMessage(), { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/balance/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+  if (!s.token) { await bot.sendMessage(chatId, R.loginRequired()); return; }
   await bot.sendMessage(chatId, '📊...');
   const [b, i] = await Promise.all([api('/api/balance', 'GET', null, chatId), api('/api/income-statement', 'GET', null, chatId)]);
-  await bot.sendMessage(chatId, '📊 *Balance*\n\n🟢 Activos: ' + fmt(b?.total_assets) + '\n🔴 Pasivos: ' + fmt(b?.total_liabilities) + '\n🔵 Patrimonio: ' + fmt(b?.equity) + '\n\n💰 Ingreso Neto: ' + fmt(i?.net_income), { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, R.balanceMessage(b?.total_assets, b?.total_liabilities, b?.equity, i?.net_income), { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/deudas/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+  if (!s.token) { await bot.sendMessage(chatId, R.loginRequired()); return; }
   await bot.sendMessage(chatId, '📋...');
   const [cxc, cxp] = await Promise.all([api('/api/receivables', 'GET', null, chatId), api('/api/payables', 'GET', null, chatId)]);
   const totalCXC = Array.isArray(cxc) ? cxc.reduce((s, r) => s + parseFloat((r.total_amount - r.paid_amount) || 0), 0) : 0;
   const totalCXP = Array.isArray(cxp) ? cxp.reduce((s, p) => s + parseFloat((p.total_amount - p.paid_amount) || 0), 0) : 0;
-  await bot.sendMessage(chatId, '📋 *Cuentas*\n\n🟢 Te deben: ' + fmt(totalCXC) + '\n🔴 Debes: ' + fmt(totalCXP), { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, R.deudasMessage(totalCXC, totalCXP), { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/productos/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+  if (!s.token) { await bot.sendMessage(chatId, R.loginRequired()); return; }
   const prods = await api('/api/products', 'GET', null, chatId);
-  if (!Array.isArray(prods) || !prods.length) { await bot.sendMessage(chatId, '📦 Sin productos'); return; }
-  let txt = '📦 *Productos*\n\n';
-  prods.slice(0, 10).forEach(p => { txt += '• ' + p.name + ' — Stock: ' + (p.stock_current || 0) + '\n'; });
-  await bot.sendMessage(chatId, txt, { parse_mode: 'Markdown' });
+  await bot.sendMessage(chatId, R.productosMessage(prods), { parse_mode: 'Markdown' });
 });
 
 bot.onText(/\/reporte/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+  if (!s.token) { await bot.sendMessage(chatId, R.loginRequired()); return; }
   s.state = 'report_type';
   await bot.sendMessage(chatId, '📊 *Que reporte?*', { parse_mode: 'Markdown', ...K_REPORT });
 });
@@ -731,32 +726,32 @@ bot.onText(/\/reporte/, async (msg) => {
 bot.onText(/\/cobrar/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+  if (!s.token) { await bot.sendMessage(chatId, R.loginRequired()); return; }
   if (!canUse(chatId, 'cobrar')) { await bot.sendMessage(chatId, planMsg(chatId)); return; }
   resetSession(chatId);
   s.state = 'cobrar_client';
-  await bot.sendMessage(chatId, '💰 *Registrar pago CxC*\n\n👤 *Nombre del cliente?*', { parse_mode: 'Markdown', ...K_CANCEL });
+  await bot.sendMessage(chatId, R.askCobrarClient(), { parse_mode: 'Markdown', ...K_CANCEL });
 });
 
 bot.onText(/\/venta/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+  if (!s.token) { await bot.sendMessage(chatId, R.loginRequired()); return; }
   if (!canUse(chatId, 'venta')) { await bot.sendMessage(chatId, planMsg(chatId)); return; }
   resetSession(chatId);
   s.context.items = [];
   s.state = 'sale_client';
-  await bot.sendMessage(chatId, '🧾 *REGISTRAR VENTA*\n\n👤 *Nombre del cliente?*', { parse_mode: 'Markdown', ...K_CANCEL });
+  await bot.sendMessage(chatId, R.askSaleClient(), { parse_mode: 'Markdown', ...K_CANCEL });
 });
 
 bot.onText(/\/gasto/, async (msg) => {
   const chatId = msg.chat.id;
   const s = getSession(chatId);
-  if (!s.token) { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+  if (!s.token) { await bot.sendMessage(chatId, R.loginRequired()); return; }
   if (!canUse(chatId, 'gasto')) { await bot.sendMessage(chatId, planMsg(chatId)); return; }
   resetSession(chatId);
   s.state = 'expense_amount';
-  await bot.sendMessage(chatId, '💸 *REGISTRAR GASTO*\n\n💰 *Monto?*', { parse_mode: 'Markdown', ...K_CANCEL });
+  await bot.sendMessage(chatId, R.askExpenseAmount(), { parse_mode: 'Markdown', ...K_CANCEL });
 });
 
 bot.on('message', async (msg) => {
@@ -778,7 +773,7 @@ bot.on('message', async (msg) => {
   if (!s.token) {
     const saved = await loadSession(chatId);
     if (saved) { s.token = saved.jwt; s.plan = saved.plan; }
-    else { await bot.sendMessage(chatId, '❌ *Primero /login*'); return; }
+    else { await bot.sendMessage(chatId, R.loginRequired()); return; }
   }
   if (!GROQ_API_KEY) {
     if (text.match(/venta|gasto|cobrar|reportes|productos|deudas|balance/i)) {
@@ -799,13 +794,13 @@ bot.on('message', async (msg) => {
     '\n\nImportante: NO interpretar CxC, credit, debit, tarjeta, efectivo, banco, transferencia, confirmar, cancelar como comandos. Estos son botones del flujo de venta/gasto/cobro.';
   const result = await groqChat(prompt);
   if (!result || result.intent === 'desconocido' || result.confidence < 0.4) {
-    await bot.sendMessage(chatId, '❌ *No entendí.* Prueba: /venta /gasto /cobrar /reporte', { parse_mode: 'Markdown' });
+    await bot.sendMessage(chatId, R.notUnderstood(), { parse_mode: 'Markdown' });
     return;
   }
   switch (result.intent) {
-    case 'venta': if (canUse(chatId, 'venta')) { resetSession(chatId); s.context.items = []; s.state = 'sale_client'; await bot.sendMessage(chatId, '🧾 *VENTA*\n\n¿A quién le vendiste?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
-    case 'gasto': if (canUse(chatId, 'gasto')) { resetSession(chatId); s.state = 'expense_amount'; await bot.sendMessage(chatId, '💸 *GASTO*\n\n💰 Monto?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
-    case 'cobrar': if (canUse(chatId, 'cobrar')) { resetSession(chatId); s.state = 'cobrar_client'; await bot.sendMessage(chatId, '💰 *COBRAR*\n\n👤 Cliente?', { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
+    case 'venta': if (canUse(chatId, 'venta')) { resetSession(chatId); s.context.items = []; s.state = 'sale_client'; await bot.sendMessage(chatId, R.askSaleClient(), { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
+    case 'gasto': if (canUse(chatId, 'gasto')) { resetSession(chatId); s.state = 'expense_amount'; await bot.sendMessage(chatId, R.askExpenseAmount(), { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
+    case 'cobrar': if (canUse(chatId, 'cobrar')) { resetSession(chatId); s.state = 'cobrar_client'; await bot.sendMessage(chatId, R.askCobrarClient(), { parse_mode: 'Markdown', ...K_CANCEL }); } else { await bot.sendMessage(chatId, planMsg(chatId)); } break;
     case 'reportes': s.state = 'report_type'; await bot.sendMessage(chatId, '📊 *Reporte?*', { parse_mode: 'Markdown', ...K_REPORT }); break;
     case 'balance': await bot.sendMessage(chatId, '/balance'); break;
     case 'deudas': await bot.sendMessage(chatId, '/deudas'); break;
