@@ -504,6 +504,53 @@ async function handleText(msgText, chatId) {
     return;
   }
 
+  // ── /login siempre tiene prioridad, ignora estado pendiente ──
+  if (/^\/login\s+\S+\s+\S/i.test(msg)) {
+    const m = msg.match(/^\/login\s+(\S+)\s+(.+)$/i);
+    if (!m) { await sendMessage(chatId, '❌ Uso: `/login usuario contraseña`'); return; }
+    const username = m[1].toLowerCase();
+    const password = m[2].trim();
+    if (!/^[a-z0-9_]{3,30}$/.test(username)) {
+      await sendMessage(chatId, '❌ Usuario inválido. Solo letras, números y guiones bajos (3-30 caracteres).'); return;
+    }
+    if (password.length < 6) { await sendMessage(chatId, '❌ La contraseña debe tener al menos 6 caracteres.'); return; }
+    const hash = crypto.pbkdf2Sync(password, username, 100000, 64, 'sha512').toString('hex');
+    const existingCred = await query('SELECT user_id, password_hash FROM user_credentials WHERE username=$1', [username]);
+    if (existingCred.rows[0]) {
+      if (existingCred.rows[0].password_hash !== hash) {
+        await sendMessage(chatId, '❌ Contraseña incorrecta.'); return;
+      }
+      const webUserId = existingCred.rows[0].user_id;
+      if (webUserId !== id) {
+        const tgTxs = await query('SELECT COUNT(*) FROM transactions WHERE user_id=$1', [id]);
+        if (parseInt(tgTxs.rows[0].count) > 0) {
+          await sendMessage(chatId, '⚠️ *Conflicto de cuentas*\n\nTienes datos en Telegram y en la web. Contacta al desarrollador.'); return;
+        }
+        for (const table of ['transactions','budgets','clients','receivables','vendors','payables','accounts','user_credentials']) {
+          await query(`UPDATE ${table} SET user_id=$1 WHERE user_id=$2`, [webUserId, id]);
+        }
+        await query('UPDATE users SET id=$1 WHERE id=$2', [webUserId, id]);
+      }
+      await clearPending(id);
+      await sendMessage(chatId, `✅ *¡Sesión iniciada!*\n\n👤 *${username}*\n\nYa puedes usar la web.`);
+    } else {
+      const myCred = await query('SELECT username FROM user_credentials WHERE user_id=$1', [id]);
+      if (myCred.rows[0]) {
+        await sendMessage(chatId, `🔒 Ya tienes credenciales:\n\n👤 *${myCred.rows[0].username}*`); return;
+      }
+      try {
+        await query(
+          `INSERT INTO user_credentials(user_id,username,password_hash) VALUES($1,$2,$3)
+           ON CONFLICT(user_id) DO UPDATE SET username=$2, password_hash=$3`,
+          [id, username, hash]
+        );
+        await clearPending(id);
+        await sendMessage(chatId, `✅ *¡Cuenta creada!*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
+      } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
+    }
+    return;
+  }
+
   const parsed = await parseWithAI(msg) || fallbackParse(msg);
 
   // ── Confirmar transacción pendiente ──
