@@ -208,10 +208,9 @@ const ACC_EMOJI = { efectivo:'💵', banco:'🏦', tarjeta:'💳' };
 
 function detectLang(msg = '') {
   const t = msg.toLowerCase();
-  const esWords = ['gasté','gaste','pagué','pague','compré','compre','deposité','deposite',
-    'cobré','cobre','recibí','recibi','ingresé','ingrese','sueldo','quincena','resumen',
-    'cuentas','alertas','historial','presupuesto','ayuda','hola','gracias','si','sí','buenos'];
-  return esWords.some(w => t.includes(w)) ? 'es' : 'en';
+  const enWords = ['spent','paid','bought','received','earned','salary','balance','history','help','accounts','budget'];
+  // Default es español — solo cambia a inglés si hay palabras claramente en inglés
+  return enWords.some(w => t.includes(w)) && !t.includes('resumen') && !t.includes('historial') ? 'en' : 'es';
 }
 
 // ─── MESSAGES ─────────────────────────────────────────────────────────────────
@@ -533,6 +532,13 @@ async function handleText(msgText, chatId) {
 
   if (/^\/miid$|^miid$/i.test(msg)) {
     await sendMessage(chatId, MSG.miid(id, lang));
+    return;
+  }
+
+  if (/^\/idioma\s+(es|en)$/i.test(msg)) {
+    const newLang = msg.match(/^\/idioma\s+(es|en)$/i)[1].toLowerCase();
+    await setUserLang(id, newLang);
+    await sendMessage(chatId, newLang === 'es' ? '✅ Idioma cambiado a español.' : '✅ Language changed to English.');
     return;
   }
 
@@ -1326,6 +1332,7 @@ bot.on('message', async (msg) => {
     if (/^\/agregarproveedor$/i.test(text)) { await handleText('agregarproveedor', chatId); return; }
     if (/^\/miid$/i.test(text))             { await handleText('miid', chatId); return; }
     if (/^\/ayuda$/i.test(text))            { await handleText('ayuda', chatId); return; }
+    if (/^\/idioma/i.test(text))            { await handleText(text, chatId); return; }
     if (/^\/setpassword/i.test(text))        { await handleText(text, chatId); return; }
     if (/^\/linkaccount/i.test(text))       { await handleText(text, chatId); return; }
     if (/^\/login/i.test(text))             { await handleText(text, chatId); return; }
