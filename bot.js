@@ -526,10 +526,13 @@ async function handleText(msgText, chatId) {
         if (parseInt(tgTxs.rows[0].count) > 0) {
           await sendMessage(chatId, '⚠️ *Conflicto de cuentas*\n\nTienes datos en Telegram y en la web. Contacta al desarrollador.'); return;
         }
-        for (const table of ['transactions','budgets','clients','receivables','vendors','payables','accounts','user_credentials']) {
+        // Eliminar cuentas/credenciales del TG user antes de migrar (evita duplicate key en accounts)
+        await query(`DELETE FROM accounts WHERE user_id=$1`, [id]);
+        await query(`DELETE FROM user_credentials WHERE user_id=$1`, [id]);
+        for (const table of ['transactions','budgets','clients','receivables','vendors','payables']) {
           await query(`UPDATE ${table} SET user_id=$1 WHERE user_id=$2`, [webUserId, id]);
         }
-        await query('UPDATE users SET id=$1 WHERE id=$2', [webUserId, id]);
+        await query(`DELETE FROM users WHERE id=$1`, [id]);
       }
       await clearPending(id);
       await sendMessage(chatId, `✅ *¡Sesión iniciada!*\n\n👤 *${username}*\n\nYa puedes usar la web.`);
@@ -657,10 +660,12 @@ async function handleText(msgText, chatId) {
           await clearPending(id);
           await sendMessage(chatId, '⚠️ *Conflicto de cuentas*\n\nTienes datos tanto en Telegram como en la web. Contacta al desarrollador para unirlas.'); return;
         }
-        for (const table of ['transactions','budgets','clients','receivables','vendors','payables','accounts','user_credentials']) {
+        await query(`DELETE FROM accounts WHERE user_id=$1`, [id]);
+        await query(`DELETE FROM user_credentials WHERE user_id=$1`, [id]);
+        for (const table of ['transactions','budgets','clients','receivables','vendors','payables']) {
           await query(`UPDATE ${table} SET user_id=$1 WHERE user_id=$2`, [webUserId, id]);
         }
-        await query('UPDATE users SET id=$1 WHERE id=$2', [webUserId, id]);
+        await query(`DELETE FROM users WHERE id=$1`, [id]);
       }
       await clearPending(id);
       await sendMessage(chatId, `✅ *¡Cuentas unidas!*\n\nYa puedes entrar a la web con:\n👤 *${username}*`);
@@ -836,10 +841,12 @@ async function handleText(msgText, chatId) {
         if (parseInt(tgTxs.rows[0].count) > 0) {
           await sendMessage(chatId, '⚠️ *Conflicto de cuentas*\n\nTienes datos en Telegram y en la web. Contacta al desarrollador.'); return;
         }
-        for (const table of ['transactions','budgets','clients','receivables','vendors','payables','accounts','user_credentials']) {
+        await query(`DELETE FROM accounts WHERE user_id=$1`, [id]);
+        await query(`DELETE FROM user_credentials WHERE user_id=$1`, [id]);
+        for (const table of ['transactions','budgets','clients','receivables','vendors','payables']) {
           await query(`UPDATE ${table} SET user_id=$1 WHERE user_id=$2`, [webUserId, id]);
         }
-        await query('UPDATE users SET id=$1 WHERE id=$2', [webUserId, id]);
+        await query(`DELETE FROM users WHERE id=$1`, [id]);
       }
       await clearPending(id);
       await sendMessage(chatId, `✅ *¡Sesión iniciada!*\n\n👤 *${username}*\n\nYa puedes usar la web.`);
@@ -920,10 +927,12 @@ async function handleText(msgText, chatId) {
         if (tgHasData) {
           await sendMessage(chatId, '⚠️ *Conflicto de cuentas*\n\nTienes datos tanto en Telegram como en la web. Contacta al desarrollador para unirlas.'); return;
         }
-        for (const table of ['transactions','budgets','clients','receivables','vendors','payables','accounts','user_credentials']) {
+        await query(`DELETE FROM accounts WHERE user_id=$1`, [id]);
+        await query(`DELETE FROM user_credentials WHERE user_id=$1`, [id]);
+        for (const table of ['transactions','budgets','clients','receivables','vendors','payables']) {
           await query(`UPDATE ${table} SET user_id=$1 WHERE user_id=$2`, [webUserId, id]);
         }
-        await query('UPDATE users SET id=$1 WHERE id=$2', [webUserId, id]);
+        await query(`DELETE FROM users WHERE id=$1`, [id]);
       }
       await clearPending(id);
       await sendMessage(chatId, `✅ *¡Cuentas unidas!*\n\nYa puedes entrar a la web con:\n👤 *${username}*`);
