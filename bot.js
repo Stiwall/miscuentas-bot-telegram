@@ -1227,6 +1227,11 @@ bot.on('message', async (msg) => {
     if (/^\/setpassword/i.test(text))        { await handleText(text, chatId); return; }
     if (/^\/linkaccount/i.test(text))       { await handleText(text, chatId); return; }
     if (/^\/login/i.test(text))             { await handleText(text, chatId); return; }
+    if (/^\/reset$/i.test(text)) {
+      await clearPending(String(chatId));
+      await sendMessage(chatId, '🔄 Operación cancelada. Puedes empezar de nuevo.\n\nUsa `/login usuario contraseña` para conectar tu cuenta.');
+      return;
+    }
     if (/^\/nuevacobranza/i.test(text))     { await handleText(text, chatId); return; }
     if (/^\/registrarpago/i.test(text))     { await handleText(text, chatId); return; }
     if (/^\/nuevacuenta/i.test(text))       { await handleText(text, chatId); return; }
