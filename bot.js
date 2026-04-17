@@ -249,7 +249,9 @@ const MSG = {
   noGroq    : (lang) => lang === 'es' ? 'El análisis de fotos no está disponible ahora mismo.' : 'Photo analysis is not available right now.',
   analyzing : (lang) => lang === 'es' ? '🔍 Analizando la foto...'                              : '🔍 Analyzing image...',
   photoError: (lang) => lang === 'es' ? 'No pude leer bien esa foto. ¿Tienes una más clara?' : 'Could not read that photo clearly. Do you have a clearer one?',
-  generalError: (lang) => lang === 'es' ? 'Algo falló por aquí, intenta de nuevo en un momento.' : 'Something went wrong, please try again.',
+  generalError: (lang, hint = '') => lang === 'es'
+    ? `Algo falló por aquí 😕${hint ? '\n\n' + hint : ''}\n\nEscribe /reset e intenta de nuevo.`
+    : `Something went wrong 😕${hint ? '\n\n' + hint : ''}\n\nType /reset and try again.`,
 
   help: (lang) => lang === 'es'
     ? `📖 *MisCuentas — Comandos*
@@ -591,7 +593,7 @@ async function handleText(msgText, chatId) {
         );
         await clearPending(id);
         await sendMessage(chatId, `✅ *¡Listo! Cuenta creada*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
-      } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
+      } catch(e) { console.error('Bot error:', e.message); await sendMessage(chatId, MSG.generalError(lang, e.message.includes("unique") ? "Ese usuario ya está en uso, prueba con otro nombre." : "")); }
     }
     return;
   }
@@ -641,7 +643,7 @@ async function handleText(msgText, chatId) {
         await query(`INSERT INTO clients(id,user_id,name) VALUES($1,$2,$3)`, [clientId, id, name]);
         await clearPending(id);
         await sendMessage(chatId, `👤 ¡Cliente agregado!\n\n*${name}*\nID: \`${clientId}\``);
-      } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
+      } catch(e) { console.error('Bot error:', e.message); await sendMessage(chatId, MSG.generalError(lang, "No se pudo agregar el cliente.")); }
       return;
     }
     if (pending.step === 'await_vendor_name') {
@@ -652,7 +654,7 @@ async function handleText(msgText, chatId) {
         await query(`INSERT INTO vendors(id,user_id,name) VALUES($1,$2,$3)`, [vendorId, id, name]);
         await clearPending(id);
         await sendMessage(chatId, `🏪 ¡Proveedor listo!\n\n*${name}*\nID: \`${vendorId}\``);
-      } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
+      } catch(e) { console.error('Bot error:', e.message); await sendMessage(chatId, MSG.generalError(lang, "No se pudo agregar el proveedor.")); }
       return;
     }
     if (pending.step === 'await_setpassword_username') {
@@ -681,7 +683,7 @@ async function handleText(msgText, chatId) {
         );
         await clearPending(id);
         await sendMessage(chatId, `✅ *¡Cuenta vinculada!*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
-      } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
+      } catch(e) { console.error('Bot error:', e.message); await sendMessage(chatId, MSG.generalError(lang, e.message.includes("unique") ? "Ese usuario ya está en uso, prueba con otro nombre." : "")); }
       return;
     }
     if (pending.step === 'await_link_username') {
@@ -918,7 +920,7 @@ async function handleText(msgText, chatId) {
         );
         await clearPending(id);
         await sendMessage(chatId, `✅ *¡Listo! Cuenta creada*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
-      } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
+      } catch(e) { console.error('Bot error:', e.message); await sendMessage(chatId, MSG.generalError(lang, e.message.includes("unique") ? "Ese usuario ya está en uso, prueba con otro nombre." : "")); }
     }
     return;
   }
@@ -950,7 +952,7 @@ async function handleText(msgText, chatId) {
         );
         await clearPending(id);
         await sendMessage(chatId, `✅ *¡Listo! Cuenta creada*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
-      } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
+      } catch(e) { console.error('Bot error:', e.message); await sendMessage(chatId, MSG.generalError(lang, e.message.includes("unique") ? "Ese usuario ya está en uso, prueba con otro nombre." : "")); }
       return;
     }
     await setPending(id, { step:'await_setpassword_username', lang });
@@ -998,27 +1000,27 @@ async function handleText(msgText, chatId) {
 
   if (cmd === 'nuevacobranza') {
     const r = await query(`SELECT name FROM clients WHERE id=$1 AND user_id=$2`, [parsed?.client_id, id]);
-    if (!r.rows[0]) { await sendMessage(chatId, '❌ Cliente no encontrado.'); return; }
+    if (!r.rows[0]) { await sendMessage(chatId, 'No encontré ese cliente. Usa /clientes para ver los IDs correctos.'); return; }
     const amt = parsed?.amount;
-    if (!amt || amt <= 0) { await sendMessage(chatId, '❌ Monto inválido.'); return; }
+    if (!amt || amt <= 0) { await sendMessage(chatId, 'Ese monto no es válido. Envía solo el número, ejemplo: 500'); return; }
     const recId = `rec_${Date.now()}_${Math.random().toString(36).substr(2,6)}`;
     try {
       await query(`INSERT INTO receivables(id,user_id,client_id,description,total_amount) VALUES($1,$2,$3,$4,$5)`,
         [recId, id, parsed.client_id, parsed.description||'Cobranza', amt]);
       await sendMessage(chatId, `✅ *CxC creada*\n\n👤 ${r.rows[0].name}\n💰 ${fmt(amt)}\nID: \`${recId}\``);
-    } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
+    } catch(e) { console.error('Bot error:', e.message); await sendMessage(chatId, MSG.generalError(lang, "No se pudo registrar la cobranza.")); }
     return;
   }
 
   if (cmd === 'registrarpago') {
     if (!parsed?.receivable_id || !parsed?.amount) {
-      await sendMessage(chatId, '❌ Uso: /registrarpago [id_cobranza] [monto]'); return;
+      await sendMessage(chatId, 'Usa así: /registrarpago [id] [monto]\nEjemplo: /registrarpago rec_123 500'); return;
     }
     const rec = await query(
       `SELECT r.*,c.name as client_name FROM receivables r JOIN clients c ON c.id=r.client_id
        WHERE r.id=$1 AND r.user_id=$2`, [parsed.receivable_id, id]
     );
-    if (!rec.rows[0]) { await sendMessage(chatId, '❌ Cobranza no encontrada.'); return; }
+    if (!rec.rows[0]) { await sendMessage(chatId, 'No encontré esa cobranza. Usa /ccobrar para ver los IDs.')); return; }
     try {
       await query(`INSERT INTO receivable_payments(id,receivable_id,amount) VALUES($1,$2,$3)`,
         [`rpay_${Date.now()}`, parsed.receivable_id, parsed.amount]);
@@ -1030,17 +1032,17 @@ async function handleText(msgText, chatId) {
       );
       const remaining = parseFloat(rec.rows[0].total_amount) - parseFloat(rec.rows[0].paid_amount) - parsed.amount;
       await sendMessage(chatId, `✅ *Pago registrado*\n\n👤 ${rec.rows[0].client_name}\n💰 ${fmt(parsed.amount)}\nQuedan: ${fmt(Math.max(0,remaining))}`);
-    } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
+    } catch(e) { console.error('Bot error:', e.message); await sendMessage(chatId, MSG.generalError(lang, "No se pudo registrar la cobranza.")); }
     return;
   }
 
   if (cmd === 'nuevacuenta') {
     if (!parsed?.code || !parsed?.name) {
-      await sendMessage(chatId, '❌ Uso: /nuevacuenta [código] [nombre] [tipo]\nTipos: asset, liability, equity, income, cost, expense'); return;
+      await sendMessage(chatId, 'Usa así: /nuevacuenta [código] [nombre] [tipo]\nEjemplo: /nuevacuenta 6.2.01 Publicidad expense'); return;
     }
     const accClass = parseInt(parsed.code.charAt(0));
     if (!accClass || accClass < 1 || accClass > 6) {
-      await sendMessage(chatId, '❌ Código debe empezar con clase 1-6.'); return;
+      await sendMessage(chatId, 'El código debe empezar con 1-6 (ej: 1.3.05 para activos, 6.2.01 para gastos).'); return;
     }
     const accId = `acc_${Date.now()}_${Math.random().toString(36).substr(2,6)}`;
     try {
@@ -1210,13 +1212,13 @@ async function cmdEntrada(chatId, args) {
     await sendMessage(chatId, `📦 *Registrar Entrada*\n\nUso: /entrada [producto] [cantidad] [precio]\n\nEjemplo: /entrada chicharron 50 2500`); return;
   }
   const parts = args.match(/(\d+(?:\.\d+)?)/g);
-  if (!parts) { await sendMessage(chatId, '❌ Incluye al menos la cantidad.\nEjemplo: /entrada chicharron 50'); return; }
+  if (!parts) { await sendMessage(chatId, 'Falta la cantidad. Ejemplo: /entrada chicharron 50 2500'); return; }
   const qty         = parseInt(parts[0]);
   const price       = parts[1] ? parseFloat(parts[1]) : 0;
   const productName = args.replace(/\d+(?:\.\d+)?/g,'').trim();
 
   const products = await apiCall('/api/products', 'GET', null, token);
-  if (!Array.isArray(products)) { await sendMessage(chatId, '❌ No pude obtener los productos.'); return; }
+  if (!Array.isArray(products)) { await sendMessage(chatId, 'No pude conectar con el servidor. Intenta en un momento.'); return; }
 
   const product = products.find(p=>p.name.toLowerCase().includes(productName.toLowerCase()));
   if (!product) {
@@ -1225,7 +1227,7 @@ async function cmdEntrada(chatId, args) {
 
   const newStock = (product.stock||0) + qty;
   const upd = await apiCall(`/api/products/${product.id}`, 'PUT', { ...product, stock:newStock }, token);
-  if (upd.error) { await sendMessage(chatId, '❌ No pude actualizar el stock.'); return; }
+  if (upd.error) { await sendMessage(chatId, 'No pude actualizar el stock. Verifica el nombre del producto con /productos.'); return; }
 
   await sendMessage(chatId,
     `✅ *Entrada registrada*\n\n📦 ${product.name}\n+${qty} unidades\nStock nuevo: ${newStock}${price?`\n💰 Costo: ${fmtRD(price)}`:''}`);
@@ -1235,7 +1237,7 @@ async function cmdAlertasStock(chatId) {
   const token = await getSessionToken(chatId);
   if (!token) { await sendMessage(chatId, '🔐 Necesitas conectar tu cuenta web. Usa '); return; }
   const products = await apiCall('/api/products', 'GET', null, token);
-  if (!Array.isArray(products)) { await sendMessage(chatId, '❌ No pude obtener los productos.'); return; }
+  if (!Array.isArray(products)) { await sendMessage(chatId, 'No pude conectar con el servidor. Intenta en un momento.'); return; }
   const lowStock = products.filter(p=>(p.stock||0)<=(p.minStock||5));
   if (!lowStock.length) { await sendMessage(chatId, '✅ ¡Todo bien! No hay productos con stock bajo.'); return; }
   let msg = '🔴 *Productos con stock bajo:*\n\n';
