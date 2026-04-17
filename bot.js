@@ -296,9 +296,10 @@ const MSG = {
 
 ━━━━━ 🔐 CUENTA WEB ━━━━━
 
-• /login usuario contraseña — Crear o vincular cuenta web
+• /login usuario contraseña — Conectar cuenta web
+• /reset — Cancelar operación actual
 • /miid — Ver tu Telegram ID`
-    : `📖 *MisCuentas — Commands*\n\n• resumen/summary, cuentas, alertas, historial\n• "spent 50 on food" / "received salary 2000"\n• /plan, /clientes, /ccobrar, /cpagar\n• /reportes, /monitoreo, /productos\n• /setpassword, /linkaccount, /miid`,
+    : `📖 *MisCuentas — Commands*\n\n• resumen/summary, cuentas, alertas, historial\n• "spent 50 on food" / "received salary 2000"\n• /plan, /clientes, /ccobrar, /cpagar\n• /reportes, /monitoreo, /productos\n• /login usuario contraseña — Conectar cuenta web\n• /reset — Cancelar operación\n• /miid`,
 };
 
 // ─── GROQ VISION ──────────────────────────────────────────────────────────────
