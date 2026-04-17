@@ -618,6 +618,18 @@ async function handleText(msgText, chatId) {
     return;
   }
 
+  // ── Si hay transacción pendiente sin step (preview de texto), avisarle ──
+  const pendingCheck = await getPending(id);
+  if (pendingCheck && !pendingCheck.step && (parsed?.type === 'ingreso' || parsed?.type === 'egreso')) {
+    const arrow = pendingCheck.type === 'ingreso' ? '▲' : '▼';
+    const catE  = CAT_EMOJI[pendingCheck.category] || '📦';
+    await sendMessage(chatId, lang === 'es'
+      ? `Espera, todavía tengo esto pendiente:\n\n${arrow} ${catE} *${pendingCheck.description}* — RD$ ${fmt(pendingCheck.amount)}\n\n¿Lo agrego? (*sí* / *no*)`
+      : `Hold on, I still have this pending:\n\n${arrow} ${catE} *${pendingCheck.description}* — ${fmt(pendingCheck.amount)}\n\nAdd it? (*yes* / *no*)`
+    );
+    return;
+  }
+
   // ── Multi-step pending state ──
   const pending = await getPending(id);
   if (pending && pending.step) {
@@ -1050,15 +1062,26 @@ async function handleText(msgText, chatId) {
       userId     : id,
       type       : parsed.type,
       amount     : parsed.amount,
-      description: parsed.desc || (parsed.type==='ingreso' ? 'Income' : 'Expense'),
+      description: parsed.desc || (parsed.type==='ingreso' ? 'Ingreso' : 'Gasto'),
       category   : parsed.cat  || 'otro',
       account    : parsed.account || 'efectivo',
       date       : now.toISOString().split('T')[0],
     };
-    await insertTx(tx);
     const detectedLang = detectLang(msg);
     if (detectedLang !== lang) await setUserLang(id, detectedLang);
-    await sendMessage(chatId, MSG.recorded(tx, lang));
+
+    // Preview conversacional antes de guardar
+    await setPending(id, tx);
+    const arrow  = tx.type === 'ingreso' ? '▲' : '▼';
+    const catE   = CAT_EMOJI[tx.category] || '📦';
+    const accE   = ACC_EMOJI[tx.account]  || '💵';
+    const hint   = lang === 'es'
+      ? `_Para otra cuenta responde: "sí banco" o "sí tarjeta"_`
+      : `_For another account reply: "yes bank" or "yes card"_`;
+    await sendMessage(chatId, lang === 'es'
+      ? `${arrow} ${catE} *${tx.description}*\n💰 RD$ ${fmt(tx.amount)}  ${accE} ${tx.account}\n\n¿Lo agrego? Responde *sí* o *no*\n${hint}`
+      : `${arrow} ${catE} *${tx.description}*\n💰 ${fmt(tx.amount)}  ${accE} ${tx.account}\n\nAdd it? Reply *yes* or *no*\n${hint}`
+    );
     return;
   }
 
