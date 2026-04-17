@@ -1069,7 +1069,7 @@ async function handlePhoto(msg, chatId) {
 async function cmdReportes(chatId, args) {
   const token = await getSessionToken(chatId);
   if (!token) {
-    await sendMessage(chatId, '🔐 Necesitas vincular tu cuenta web primero.\nUsa /linkaccount o /setpassword'); return;
+    await sendMessage(chatId, '🔐 Necesitas vincular tu cuenta web primero.\nUsa /login usuario contraseña'); return;
   }
   const type = (args || '').toLowerCase();
   await sendMessage(chatId, '📊 Cargando reporte...');
@@ -1100,7 +1100,7 @@ async function cmdReportes(chatId, args) {
 async function cmdMonitoreo(chatId) {
   const token = await getSessionToken(chatId);
   if (!token) {
-    await sendMessage(chatId, '🔐 Usa /linkaccount primero.'); return;
+    await sendMessage(chatId, '🔐 Usa /login usuario contraseña'); return;
   }
   await sendMessage(chatId, '👁️ Cargando estado del negocio...');
 
@@ -1127,7 +1127,7 @@ async function cmdMonitoreo(chatId) {
 
 async function cmdProductos(chatId) {
   const token = await getSessionToken(chatId);
-  if (!token) { await sendMessage(chatId, '🔐 Usa /linkaccount primero.'); return; }
+  if (!token) { await sendMessage(chatId, '🔐 Usa /login usuario contraseña'); return; }
   const products = await apiCall('/api/products', 'GET', null, token);
   if (!Array.isArray(products)) { await sendMessage(chatId, `❌ ${products.error||'Error obteniendo productos'}`); return; }
   if (!products.length) { await sendMessage(chatId, '📦 No hay productos registrados.'); return; }
@@ -1141,7 +1141,7 @@ async function cmdProductos(chatId) {
 
 async function cmdEntrada(chatId, args) {
   const token = await getSessionToken(chatId);
-  if (!token) { await sendMessage(chatId, '🔐 Usa /linkaccount primero.'); return; }
+  if (!token) { await sendMessage(chatId, '🔐 Usa /login usuario contraseña'); return; }
   if (!args?.trim()) {
     await sendMessage(chatId, `📦 *Registrar Entrada*\n\nUso: /entrada [producto] [cantidad] [precio]\n\nEjemplo: /entrada chicharron 50 2500`); return;
   }
@@ -1169,7 +1169,7 @@ async function cmdEntrada(chatId, args) {
 
 async function cmdAlertasStock(chatId) {
   const token = await getSessionToken(chatId);
-  if (!token) { await sendMessage(chatId, '🔐 Usa /linkaccount primero.'); return; }
+  if (!token) { await sendMessage(chatId, '🔐 Usa /login usuario contraseña'); return; }
   const products = await apiCall('/api/products', 'GET', null, token);
   if (!Array.isArray(products)) { await sendMessage(chatId, '❌ No pude obtener los productos.'); return; }
   const lowStock = products.filter(p=>(p.stock||0)<=(p.minStock||5));
