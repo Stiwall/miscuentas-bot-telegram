@@ -418,6 +418,9 @@ function fallbackParse(msg) {
     no:'cancelar', cancel:'cancelar',
   };
   if (CMDS[t]) return { type:'comando', cmd:CMDS[t] };
+  // Match commands with args (e.g. "setpassword user pass")
+  const cmdWord = t.split(/\s+/)[0];
+  if (CMDS[cmdWord]) return { type:'comando', cmd:CMDS[cmdWord] };
 
   const bm = t.match(/(?:presupuesto|budget)\s+(\w+)\s+(\d+(?:[.,]\d+)?)/);
   if (bm) return { type:'comando', cmd:'set_budget', budget_cat:bm[1], budget_amount:parseFloat(bm[2].replace(',','.')) };
@@ -769,8 +772,33 @@ async function handleText(msgText, chatId) {
     if (existingCred.rows[0]) {
       await sendMessage(chatId, `🔒 Ya tienes credenciales:\n\n👤 *${existingCred.rows[0].username}*`); return;
     }
+    // Support inline: /setpassword usuario contraseña
+    const inlineMatch = msg.match(/^\/setpassword\s+(\S+)\s+(.+)$/i);
+    if (inlineMatch) {
+      const username = inlineMatch[1].toLowerCase();
+      const password = inlineMatch[2].trim();
+      if (!/^[a-z0-9_]{3,30}$/.test(username)) {
+        await sendMessage(chatId, '❌ Usuario inválido. Solo letras, números y guiones bajos. 3-30 caracteres.'); return;
+      }
+      if (password.length < 6) { await sendMessage(chatId, '❌ La contraseña debe tener al menos 6 caracteres.'); return; }
+      const existing = await query('SELECT user_id FROM user_credentials WHERE username=$1', [username]);
+      if (existing.rows[0] && existing.rows[0].user_id !== id) {
+        await sendMessage(chatId, '❌ Ese nombre de usuario ya está tomado. Elige otro.'); return;
+      }
+      const hash = crypto.pbkdf2Sync(password, username, 100000, 64, 'sha512').toString('hex');
+      try {
+        await query(
+          `INSERT INTO user_credentials(user_id,username,password_hash) VALUES($1,$2,$3)
+           ON CONFLICT(user_id) DO UPDATE SET username=$2, password_hash=$3`,
+          [id, username, hash]
+        );
+        await clearPending(id);
+        await sendMessage(chatId, `✅ *¡Cuenta creada!*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
+      } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
+      return;
+    }
     await setPending(id, { step:'await_setpassword_username', lang });
-    await sendMessage(chatId, `🔐 *Crear contraseña para la web*\n\nEnvía el nombre de usuario (letras, números y _, 3-30 caracteres):`); return;
+    await sendMessage(chatId, `🔐 *Crear contraseña para la web*\n\nPuedes enviarlo todo junto:\n\`/setpassword usuario contraseña\`\n\nO solo envía tu usuario ahora:`); return;
   }
 
   if (cmd === 'linkaccount') {
@@ -778,8 +806,36 @@ async function handleText(msgText, chatId) {
     if (existingCred.rows[0]) {
       await sendMessage(chatId, `🔒 Ya estás vinculado:\n\n👤 *${existingCred.rows[0].username}*`); return;
     }
+    // Support inline: /linkaccount usuario contraseña
+    const inlineMatch = msg.match(/^\/linkaccount\s+(\S+)\s+(.+)$/i);
+    if (inlineMatch) {
+      const username = inlineMatch[1].toLowerCase();
+      const password = inlineMatch[2].trim();
+      if (!/^[a-z0-9_]{3,30}$/.test(username)) {
+        await sendMessage(chatId, '❌ Usuario inválido.'); return;
+      }
+      const hash = crypto.pbkdf2Sync(password, username.toLowerCase(), 100000, 64, 'sha512').toString('hex');
+      const cred = await query('SELECT user_id,password_hash FROM user_credentials WHERE username=$1', [username]);
+      if (!cred.rows[0]) { await sendMessage(chatId, '❌ Usuario no encontrado.'); return; }
+      if (cred.rows[0].password_hash !== hash) { await sendMessage(chatId, '❌ Contraseña incorrecta.'); return; }
+      const webUserId = cred.rows[0].user_id;
+      const tgTxs = await query('SELECT COUNT(*) FROM transactions WHERE user_id=$1', [id]);
+      const tgHasData = parseInt(tgTxs.rows[0].count) > 0;
+      if (webUserId !== id) {
+        if (tgHasData) {
+          await sendMessage(chatId, '⚠️ *Conflicto de cuentas*\n\nTienes datos tanto en Telegram como en la web. Contacta al desarrollador para unirlas.'); return;
+        }
+        for (const table of ['transactions','budgets','clients','receivables','vendors','payables','accounts','user_credentials']) {
+          await query(`UPDATE ${table} SET user_id=$1 WHERE user_id=$2`, [webUserId, id]);
+        }
+        await query('UPDATE users SET id=$1 WHERE id=$2', [webUserId, id]);
+      }
+      await clearPending(id);
+      await sendMessage(chatId, `✅ *¡Cuentas unidas!*\n\nYa puedes entrar a la web con:\n👤 *${username}*`);
+      return;
+    }
     await setPending(id, { step:'await_link_username', lang });
-    await sendMessage(chatId, `🔗 *Vincular cuenta web*\n\nEnvía tu *usuario* de la web:`); return;
+    await sendMessage(chatId, `🔗 *Vincular cuenta web*\n\nPuedes enviarlo todo junto:\n\`/linkaccount usuario contraseña\`\n\nO solo envía tu usuario ahora:`); return;
   }
 
   if (cmd === 'nuevacobranza') {
@@ -1073,8 +1129,8 @@ bot.on('message', async (msg) => {
     if (/^\/agregarproveedor$/i.test(text)) { await handleText('agregarproveedor', chatId); return; }
     if (/^\/miid$/i.test(text))             { await handleText('miid', chatId); return; }
     if (/^\/ayuda$/i.test(text))            { await handleText('ayuda', chatId); return; }
-    if (/^\/setpassword$/i.test(text))      { await handleText('setpassword', chatId); return; }
-    if (/^\/linkaccount$/i.test(text))      { await handleText('linkaccount', chatId); return; }
+    if (/^\/setpassword/i.test(text))        { await handleText(text, chatId); return; }
+    if (/^\/linkaccount/i.test(text))       { await handleText(text, chatId); return; }
     if (/^\/nuevacobranza/i.test(text))     { await handleText(text, chatId); return; }
     if (/^\/registrarpago/i.test(text))     { await handleText(text, chatId); return; }
     if (/^\/nuevacuenta/i.test(text))       { await handleText(text, chatId); return; }
