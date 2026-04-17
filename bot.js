@@ -217,38 +217,39 @@ function detectLang(msg = '') {
 // ─── MESSAGES ─────────────────────────────────────────────────────────────────
 const MSG = {
   welcome: (id, lang) => lang === 'es'
-    ? `👋 *¡Bienvenido a MisCuentas!*\n\n🎉 Ya puedes registrar tus finanzas.\n\nTu Telegram ID: \`${id}\`\nÚsalo para entrar al panel web.\n\nEnvía *ayuda* o /ayuda para ver los comandos.`
-    : `👋 *Welcome to MisCuentas!*\n\n🎉 Start tracking your finances now.\n\nYour Telegram ID: \`${id}\`\nUse it to log in to the web panel.\n\nSend *help* for all commands.`,
+    ? `👋 ¡Qué lo que! Soy *MisCuentas*, tu asistente de finanzas.\n\nPuedes decirme cosas como:\n• _"gasté 500 en comida"_\n• _"me depositaron la quincena 18000"_\n• _"cómo voy este mes?"_\n\nTu ID de Telegram es \`${id}\` — lo necesitas para entrar a la web.\n\nEscribe *ayuda* si quieres ver todo lo que puedo hacer.`
+    : `👋 Welcome to *MisCuentas*! I'm your finance assistant.\n\nTry saying:\n• _"spent 50 on food"_\n• _"received salary 2000"_\n• _"how am I doing this month?"_\n\nYour Telegram ID: \`${id}\`\n\nType *help* for all commands.`,
 
   miid: (id, lang) => lang === 'es'
-    ? `🪪 *Tu Telegram ID:*\n\n\`${id}\`\n\nÚsalo para entrar al panel web.`
-    : `🪪 *Your Telegram ID:*\n\n\`${id}\`\n\nUse it to log in to the web panel.`,
+    ? `Tu ID de Telegram es:\n\n\`${id}\`\n\nCópialo y úsalo para entrar a la web.`
+    : `Your Telegram ID:\n\n\`${id}\`\n\nCopy it to log in to the web.`,
 
   recorded: (tx, lang) => {
     const catE  = CAT_EMOJI[tx.category] || '📦';
     const accE  = ACC_EMOJI[tx.account]  || '💵';
     const arrow = tx.type === 'ingreso' ? '▲' : '▼';
-    const phrases = ['¡Listo! Quedó registrado 🔥','✨ Perfecto, lo tengo anotado','👌 Registrado sin problema','📝 Anotado en tu historial'];
-    const phrase = phrases[Math.floor(Math.random() * phrases.length)];
+    const esOk  = ['¡Ta bien, anotado! 🔥','Listo, quedó guardado 👌','Lo tengo, no hay problema ✅','Anotado en tu historial 📝','Perfecto, ya lo registré ✨'];
+    const enOk  = ['Got it, recorded ✅','Done! Saved to your history 📝','All set 👌'];
+    const phrase = lang === 'es' ? esOk[Math.floor(Math.random()*esOk.length)] : enOk[Math.floor(Math.random()*enOk.length)];
     return lang === 'es'
-      ? `${phrase}\n\n${arrow} ${catE} ${tx.description}\n💰 ${fmt(tx.amount)}\n${accE} ${tx.account}`
-      : `✅ *Recorded*\n\n${arrow} ${catE} ${tx.description}\n💰 ${fmt(tx.amount)}\n${accE} ${tx.account}`;
+      ? `${phrase}\n\n${arrow} ${catE} *${tx.description}*\n💰 RD$ ${fmt(tx.amount)}\n${accE} ${tx.account}`
+      : `${phrase}\n\n${arrow} ${catE} *${tx.description}*\n💰 ${fmt(tx.amount)}\n${accE} ${tx.account}`;
   },
 
   receiptPreview: (tx, lang) => lang === 'es'
-    ? `🧾 *Factura detectada*\n\n📍 ${tx.description}\n💰 ${fmt(tx.amount)}\n${CAT_EMOJI[tx.category]||'📦'} ${tx.category}\n\n✅ Responde *si* para confirmar\n❌ Responde *no* para cancelar\n💡 Para cambiar cuenta: *si banco* o *si tarjeta*`
-    : `🧾 *Receipt detected*\n\n📍 ${tx.description}\n💰 ${fmt(tx.amount)}\n${CAT_EMOJI[tx.category]||'📦'} ${tx.category}\n\n✅ Reply *yes* to confirm\n❌ Reply *no* to cancel\n💡 To change account: *yes bank* or *yes card*`,
+    ? `🧾 Encontré esto en la foto:\n\n📍 *${tx.description}*\n💰 RD$ ${fmt(tx.amount)}\n${CAT_EMOJI[tx.category]||'📦'} ${tx.category}\n\n¿Lo agrego? Responde *sí* o *no*\n_Para otra cuenta: "sí banco" o "sí tarjeta"_`
+    : `🧾 Found this in the photo:\n\n📍 *${tx.description}*\n💰 ${fmt(tx.amount)}\n${CAT_EMOJI[tx.category]||'📦'} ${tx.category}\n\nAdd it? Reply *yes* or *no*\n_For another account: "yes bank" or "yes card"_`,
 
-  noPending    : (lang) => lang === 'es' ? '❌ No hay transacción pendiente.'  : '❌ No pending transaction.',
-  cancelled    : (lang) => lang === 'es' ? '❌ Cancelado.'                     : '❌ Cancelled.',
+  noPending    : (lang) => lang === 'es' ? 'No tienes nada pendiente por confirmar.' : 'No pending transaction.',
+  cancelled    : (lang) => lang === 'es' ? 'Okay, cancelado. ¿Qué más?' : 'Cancelled. What else?',
   notUnderstood: (lang) => lang === 'es'
-    ? `🤔 No me queda claro qué quieres.\n\nPrueba con algo como:\n• "gasté 350 en comida"\n• "mi resumen del mes"\n• /ayuda para ver todos los comandos`
-    : `🤔 I didn't understand that.\n\nTry:\n• "spent 50 on food"\n• "my monthly summary"\n• /ayuda for all commands`,
+    ? `Hmm, no entendí bien eso 🤔\n\nPrueba diciéndome algo como:\n• _"gasté 350 en el colmado"_\n• _"me cayó la quincena 18000"_\n• _"cómo voy este mes"_\n\nO escribe *ayuda* para ver todo.`
+    : `Hmm, I didn't catch that 🤔\n\nTry:\n• _"spent 50 on food"_\n• _"received salary 2000"_\n• _"how am I doing?"_\n\nType *help* for all commands.`,
 
-  noGroq    : (lang) => lang === 'es' ? '❌ El análisis de fotos no está configurado.' : '❌ Photo analysis is not configured.',
-  analyzing : (lang) => lang === 'es' ? '🔄 *Analizando factura...*'                   : '🔄 *Analyzing receipt...*',
-  photoError: (lang) => lang === 'es' ? '❌ No pude analizar la imagen. Intenta con una foto más clara.' : '❌ Could not analyze image. Try a clearer photo.',
-  generalError: (lang) => lang === 'es' ? '❌ Ocurrió un error. Intenta de nuevo.' : '❌ An error occurred. Please try again.',
+  noGroq    : (lang) => lang === 'es' ? 'El análisis de fotos no está disponible ahora mismo.' : 'Photo analysis is not available right now.',
+  analyzing : (lang) => lang === 'es' ? '🔍 Analizando la foto...'                              : '🔍 Analyzing image...',
+  photoError: (lang) => lang === 'es' ? 'No pude leer bien esa foto. ¿Tienes una más clara?' : 'Could not read that photo clearly. Do you have a clearer one?',
+  generalError: (lang) => lang === 'es' ? 'Algo falló por aquí, intenta de nuevo en un momento.' : 'Something went wrong, please try again.',
 
   help: (lang) => lang === 'es'
     ? `📖 *MisCuentas — Comandos*
@@ -534,14 +535,14 @@ async function handleText(msgText, chatId) {
     const username = m[1].toLowerCase();
     const password = m[2].trim();
     if (!/^[a-z0-9_]{3,30}$/.test(username)) {
-      await sendMessage(chatId, '❌ Usuario inválido. Solo letras, números y guiones bajos (3-30 caracteres).'); return;
+      await sendMessage(chatId, '❌ Ese usuario no funciona — usa solo letras, números y guiones bajos (3-30 caracteres).'); return;
     }
-    if (password.length < 6) { await sendMessage(chatId, '❌ La contraseña debe tener al menos 6 caracteres.'); return; }
+    if (password.length < 6) { await sendMessage(chatId, '❌ La contraseña necesita al menos 6 caracteres.'); return; }
     const hash = crypto.pbkdf2Sync(password, username, 100000, 64, 'sha512').toString('hex');
     const existingCred = await query('SELECT user_id, password_hash FROM user_credentials WHERE username=$1', [username]);
     if (existingCred.rows[0]) {
       if (existingCred.rows[0].password_hash !== hash) {
-        await sendMessage(chatId, '❌ Contraseña incorrecta.'); return;
+        await sendMessage(chatId, '❌ Esa contraseña no es correcta. Intenta de nuevo.'); return;
       }
       const webUserId = existingCred.rows[0].user_id;
       if (webUserId !== id) {
@@ -558,11 +559,11 @@ async function handleText(msgText, chatId) {
         await query(`DELETE FROM users WHERE id=$1`, [id]);
       }
       await clearPending(id);
-      await sendMessage(chatId, `✅ *¡Sesión iniciada!*\n\n👤 *${username}*\n\nYa puedes usar la web.`);
+      await sendMessage(chatId, `✅ *¡Bienvenido de vuelta!*\n\n👤 *${username}*\n\nYa puedes usar la web.`);
     } else {
       const myCred = await query('SELECT username FROM user_credentials WHERE user_id=$1', [id]);
       if (myCred.rows[0]) {
-        await sendMessage(chatId, `🔒 Ya tienes credenciales:\n\n👤 *${myCred.rows[0].username}*`); return;
+        await sendMessage(chatId, `🔒 Ya estás registrado como\n\n👤 *${myCred.rows[0].username}*`); return;
       }
       try {
         await query(
@@ -571,7 +572,7 @@ async function handleText(msgText, chatId) {
           [id, username, hash]
         );
         await clearPending(id);
-        await sendMessage(chatId, `✅ *¡Cuenta creada!*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
+        await sendMessage(chatId, `✅ *¡Listo! Cuenta creada*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
       } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
     }
     return;
@@ -627,11 +628,11 @@ async function handleText(msgText, chatId) {
     if (pending.step === 'await_setpassword_username') {
       const username = msg.trim().toLowerCase();
       if (!/^[a-z0-9_]{3,30}$/.test(username)) {
-        await sendMessage(chatId, '❌ Usuario inválido. Solo letras, números y guiones bajos. 3-30 caracteres.'); return;
+        await sendMessage(chatId, '❌ Ese usuario no funciona — usa solo letras, números y guiones bajos (3-30 caracteres).'); return;
       }
       const existing = await query('SELECT user_id FROM user_credentials WHERE username=$1', [username]);
       if (existing.rows[0] && existing.rows[0].user_id !== id) {
-        await sendMessage(chatId, '❌ Ese nombre de usuario ya está tomado. Elige otro.'); return;
+        await sendMessage(chatId, '❌ Ese usuario ya lo tiene alguien más, prueba con otro.'); return;
       }
       await setPending(id, { step:'await_setpassword_password', username, lang });
       await sendMessage(chatId, `✅ Usuario: *${username}*\n\nAhora envía tu contraseña (mínimo 6 caracteres):`);
@@ -639,7 +640,7 @@ async function handleText(msgText, chatId) {
     }
     if (pending.step === 'await_setpassword_password') {
       const password = msg.trim();
-      if (password.length < 6) { await sendMessage(chatId, '❌ La contraseña debe tener al menos 6 caracteres.'); return; }
+      if (password.length < 6) { await sendMessage(chatId, '❌ La contraseña necesita al menos 6 caracteres.'); return; }
       const username = pending.username;
       const hash = crypto.pbkdf2Sync(password, username.toLowerCase(), 100000, 64, 'sha512').toString('hex');
       try {
@@ -656,7 +657,7 @@ async function handleText(msgText, chatId) {
     if (pending.step === 'await_link_username') {
       const username = msg.trim().toLowerCase();
       if (!/^[a-z0-9_]{3,30}$/.test(username)) {
-        await sendMessage(chatId, '❌ Usuario inválido.'); return;
+        await sendMessage(chatId, '❌ Ese usuario no es válido.'); return;
       }
       await setPending(id, { step:'await_link_password', username, lang });
       await sendMessage(chatId, `✅ Usuario: *${username}*\n\nAhora envía tu contraseña:`);
@@ -668,11 +669,11 @@ async function handleText(msgText, chatId) {
       const hash      = crypto.pbkdf2Sync(password, username.toLowerCase(), 100000, 64, 'sha512').toString('hex');
       const cred      = await query('SELECT user_id,password_hash FROM user_credentials WHERE username=$1', [username]);
       if (!cred.rows[0]) {
-        await sendMessage(chatId, '❌ Usuario no encontrado.');
+        await sendMessage(chatId, '❌ No encontré ese usuario. ¿Está bien escrito?');
         await setPending(id, { step:'await_link_username', lang }); return;
       }
       if (cred.rows[0].password_hash !== hash) {
-        await sendMessage(chatId, '❌ Contraseña incorrecta.');
+        await sendMessage(chatId, '❌ Esa contraseña no es correcta. Intenta de nuevo.');
         await setPending(id, { step:'await_link_password', username, lang }); return;
       }
       const webUserId = cred.rows[0].user_id;
@@ -848,15 +849,15 @@ async function handleText(msgText, chatId) {
     const username = m[1].toLowerCase();
     const password = m[2].trim();
     if (!/^[a-z0-9_]{3,30}$/.test(username)) {
-      await sendMessage(chatId, '❌ Usuario inválido. Solo letras, números y guiones bajos (3-30 caracteres).'); return;
+      await sendMessage(chatId, '❌ Ese usuario no funciona — usa solo letras, números y guiones bajos (3-30 caracteres).'); return;
     }
-    if (password.length < 6) { await sendMessage(chatId, '❌ La contraseña debe tener al menos 6 caracteres.'); return; }
+    if (password.length < 6) { await sendMessage(chatId, '❌ La contraseña necesita al menos 6 caracteres.'); return; }
     const hash = crypto.pbkdf2Sync(password, username, 100000, 64, 'sha512').toString('hex');
     const existingCred = await query('SELECT user_id, password_hash FROM user_credentials WHERE username=$1', [username]);
     if (existingCred.rows[0]) {
       // Username existe → intentar vincular
       if (existingCred.rows[0].password_hash !== hash) {
-        await sendMessage(chatId, '❌ Contraseña incorrecta.'); return;
+        await sendMessage(chatId, '❌ Esa contraseña no es correcta. Intenta de nuevo.'); return;
       }
       const webUserId = existingCred.rows[0].user_id;
       if (webUserId !== id) {
@@ -872,12 +873,12 @@ async function handleText(msgText, chatId) {
         await query(`DELETE FROM users WHERE id=$1`, [id]);
       }
       await clearPending(id);
-      await sendMessage(chatId, `✅ *¡Sesión iniciada!*\n\n👤 *${username}*\n\nYa puedes usar la web.`);
+      await sendMessage(chatId, `✅ *¡Bienvenido de vuelta!*\n\n👤 *${username}*\n\nYa puedes usar la web.`);
     } else {
       // Username nuevo → crear credenciales
       const myCred = await query('SELECT username FROM user_credentials WHERE user_id=$1', [id]);
       if (myCred.rows[0]) {
-        await sendMessage(chatId, `🔒 Ya tienes credenciales:\n\n👤 *${myCred.rows[0].username}*`); return;
+        await sendMessage(chatId, `🔒 Ya estás registrado como\n\n👤 *${myCred.rows[0].username}*`); return;
       }
       try {
         await query(
@@ -886,7 +887,7 @@ async function handleText(msgText, chatId) {
           [id, username, hash]
         );
         await clearPending(id);
-        await sendMessage(chatId, `✅ *¡Cuenta creada!*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
+        await sendMessage(chatId, `✅ *¡Listo! Cuenta creada*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
       } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
     }
     return;
@@ -895,7 +896,7 @@ async function handleText(msgText, chatId) {
   if (cmd === 'setpassword') {
     const existingCred = await query('SELECT username FROM user_credentials WHERE user_id=$1', [id]);
     if (existingCred.rows[0]) {
-      await sendMessage(chatId, `🔒 Ya tienes credenciales:\n\n👤 *${existingCred.rows[0].username}*`); return;
+      await sendMessage(chatId, `🔒 Ya estás registrado como\n\n👤 *${existingCred.rows[0].username}*`); return;
     }
     // Support inline: /setpassword usuario contraseña
     const inlineMatch = msg.match(/^\/setpassword\s+(\S+)\s+(.+)$/i);
@@ -903,12 +904,12 @@ async function handleText(msgText, chatId) {
       const username = inlineMatch[1].toLowerCase();
       const password = inlineMatch[2].trim();
       if (!/^[a-z0-9_]{3,30}$/.test(username)) {
-        await sendMessage(chatId, '❌ Usuario inválido. Solo letras, números y guiones bajos. 3-30 caracteres.'); return;
+        await sendMessage(chatId, '❌ Ese usuario no funciona — usa solo letras, números y guiones bajos (3-30 caracteres).'); return;
       }
-      if (password.length < 6) { await sendMessage(chatId, '❌ La contraseña debe tener al menos 6 caracteres.'); return; }
+      if (password.length < 6) { await sendMessage(chatId, '❌ La contraseña necesita al menos 6 caracteres.'); return; }
       const existing = await query('SELECT user_id FROM user_credentials WHERE username=$1', [username]);
       if (existing.rows[0] && existing.rows[0].user_id !== id) {
-        await sendMessage(chatId, '❌ Ese nombre de usuario ya está tomado. Elige otro.'); return;
+        await sendMessage(chatId, '❌ Ese usuario ya lo tiene alguien más, prueba con otro.'); return;
       }
       const hash = crypto.pbkdf2Sync(password, username, 100000, 64, 'sha512').toString('hex');
       try {
@@ -918,7 +919,7 @@ async function handleText(msgText, chatId) {
           [id, username, hash]
         );
         await clearPending(id);
-        await sendMessage(chatId, `✅ *¡Cuenta creada!*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
+        await sendMessage(chatId, `✅ *¡Listo! Cuenta creada*\n\n👤 Usuario: *${username}*\n\nYa puedes entrar a la web.`);
       } catch(e) { await sendMessage(chatId, MSG.generalError(lang)); }
       return;
     }
@@ -929,7 +930,7 @@ async function handleText(msgText, chatId) {
   if (cmd === 'linkaccount') {
     const existingCred = await query('SELECT username FROM user_credentials WHERE user_id=$1', [id]);
     if (existingCred.rows[0]) {
-      await sendMessage(chatId, `🔒 Ya estás vinculado:\n\n👤 *${existingCred.rows[0].username}*`); return;
+      await sendMessage(chatId, `🔒 Ya tienes una cuenta vinculada:\n\n👤 *${existingCred.rows[0].username}*`); return;
     }
     // Support inline: /linkaccount usuario contraseña
     const inlineMatch = msg.match(/^\/linkaccount\s+(\S+)\s+(.+)$/i);
@@ -937,12 +938,12 @@ async function handleText(msgText, chatId) {
       const username = inlineMatch[1].toLowerCase();
       const password = inlineMatch[2].trim();
       if (!/^[a-z0-9_]{3,30}$/.test(username)) {
-        await sendMessage(chatId, '❌ Usuario inválido.'); return;
+        await sendMessage(chatId, '❌ Ese usuario no es válido.'); return;
       }
       const hash = crypto.pbkdf2Sync(password, username.toLowerCase(), 100000, 64, 'sha512').toString('hex');
       const cred = await query('SELECT user_id,password_hash FROM user_credentials WHERE username=$1', [username]);
-      if (!cred.rows[0]) { await sendMessage(chatId, '❌ Usuario no encontrado.'); return; }
-      if (cred.rows[0].password_hash !== hash) { await sendMessage(chatId, '❌ Contraseña incorrecta.'); return; }
+      if (!cred.rows[0]) { await sendMessage(chatId, '❌ No encontré ese usuario. ¿Está bien escrito?'); return; }
+      if (cred.rows[0].password_hash !== hash) { await sendMessage(chatId, '❌ Esa contraseña no es correcta. Intenta de nuevo.'); return; }
       const webUserId = cred.rows[0].user_id;
       const tgTxs = await query('SELECT COUNT(*) FROM transactions WHERE user_id=$1', [id]);
       const tgHasData = parseInt(tgTxs.rows[0].count) > 0;
@@ -1122,7 +1123,7 @@ async function cmdReportes(chatId, args) {
 async function cmdMonitoreo(chatId) {
   const token = await getSessionToken(chatId);
   if (!token) {
-    await sendMessage(chatId, '🔐 Usa /login usuario contraseña'); return;
+    await sendMessage(chatId, '🔐 Necesitas conectar tu cuenta web. Usa '); return;
   }
   await sendMessage(chatId, '👁️ Cargando estado del negocio...');
 
@@ -1149,7 +1150,7 @@ async function cmdMonitoreo(chatId) {
 
 async function cmdProductos(chatId) {
   const token = await getSessionToken(chatId);
-  if (!token) { await sendMessage(chatId, '🔐 Usa /login usuario contraseña'); return; }
+  if (!token) { await sendMessage(chatId, '🔐 Necesitas conectar tu cuenta web. Usa '); return; }
   const products = await apiCall('/api/products', 'GET', null, token);
   if (!Array.isArray(products)) { await sendMessage(chatId, `❌ ${products.error||'Error obteniendo productos'}`); return; }
   if (!products.length) { await sendMessage(chatId, '📦 No hay productos registrados.'); return; }
@@ -1163,7 +1164,7 @@ async function cmdProductos(chatId) {
 
 async function cmdEntrada(chatId, args) {
   const token = await getSessionToken(chatId);
-  if (!token) { await sendMessage(chatId, '🔐 Usa /login usuario contraseña'); return; }
+  if (!token) { await sendMessage(chatId, '🔐 Necesitas conectar tu cuenta web. Usa '); return; }
   if (!args?.trim()) {
     await sendMessage(chatId, `📦 *Registrar Entrada*\n\nUso: /entrada [producto] [cantidad] [precio]\n\nEjemplo: /entrada chicharron 50 2500`); return;
   }
@@ -1191,7 +1192,7 @@ async function cmdEntrada(chatId, args) {
 
 async function cmdAlertasStock(chatId) {
   const token = await getSessionToken(chatId);
-  if (!token) { await sendMessage(chatId, '🔐 Usa /login usuario contraseña'); return; }
+  if (!token) { await sendMessage(chatId, '🔐 Necesitas conectar tu cuenta web. Usa '); return; }
   const products = await apiCall('/api/products', 'GET', null, token);
   if (!Array.isArray(products)) { await sendMessage(chatId, '❌ No pude obtener los productos.'); return; }
   const lowStock = products.filter(p=>(p.stock||0)<=(p.minStock||5));
