@@ -326,33 +326,44 @@ async function analyzeReceipt(base64, mimeType) {
 async function parseWithAI(message) {
   if (!GEMINI_API_KEY) return null;
   const prompt =
-    'You are a friendly Dominican Spanish-speaking personal finance assistant. Parse this message and respond ONLY with valid JSON on one line, no markdown.' +
-    '\n\nMessage: ' + message +
-    '\n\nFormat: {"type":"ingreso|egreso|comando","amount":number_or_null,"desc":"text","cat":"category","account":"efectivo|banco|tarjeta","cmd":null,"budget_cat":null,"budget_amount":null}' +
-    '\n\nCategories: comida,transporte,servicios,salud,entretenimiento,ropa,educacion,salario,negocio,inversion,prestamo,ahorro,otro' +
-    '\n\nRules:' +
-    '\n- tarjeta/card/credit → account:tarjeta' +
-    '\n- banco/bank/transfer/deposito → account:banco' +
-    '\n- income words (recibí,gané,cobré,deposité,sueldo,quincena,vendí,venta,received,earned,salary) → type:ingreso' +
-    '\n- expense words (gasté,pagué,compré,spent,paid,bought) → type:egreso' +
-    '\n- resumen/summary/balance/hoy → type:comando,cmd:resumen' +
-    '\n- cuentas/accounts → type:comando,cmd:ver_cuentas' +
-    '\n- historial/history → type:comando,cmd:historial' +
-    '\n- ayuda/help/start → type:comando,cmd:ayuda' +
-    '\n- presupuesto/budget → type:comando,cmd:presupuesto' +
-    '\n- clientes → type:comando,cmd:clientes' +
-    '\n- ccobrar/cxc → type:comando,cmd:ccobrar' +
-    '\n- cpagar/cxp → type:comando,cmd:cpagar' +
-    '\n- alertas/alerts → type:comando,cmd:alertas' +
-    '\n- plan/cuentas contables → type:comando,cmd:plan' +
-    '\n- agregarcliente → type:comando,cmd:agregarcliente' +
-    '\n- agregarproveedor → type:comando,cmd:agregarproveedor' +
-    '\n- nuevacobranza clientId 500 desc → type:comando,cmd:nuevacobranza,client_id:clientId,amount:500,description:desc' +
-    '\n- registrarpago recId 200 → type:comando,cmd:registrarpago,receivable_id:recId,amount:200' +
-    '\n- nuevacuenta 1.3.05 Name asset → type:comando,cmd:nuevacuenta,code:1.3.05,name:Name,type:asset' +
-    '\n- presupuesto X 500 → type:comando,cmd:set_budget,budget_cat:X,budget_amount:500' +
-    '\n- si/yes + optional account → type:comando,cmd:confirmar,account:parsed_or_efectivo' +
-    '\n- no/cancel → type:comando,cmd:cancelar';
+    'Eres el asistente financiero de MisCuentas, hablás dominicano. Parsea el mensaje y responde SOLO con JSON válido en una línea, sin markdown.' +
+    '\n\nMensaje: ' + message +
+    '\n\nFormato: {"type":"ingreso|egreso|comando","amount":number_or_null,"desc":"texto","cat":"categoria","account":"efectivo|banco|tarjeta","cmd":null,"budget_cat":null,"budget_amount":null}' +
+    '\n\nCategorías: comida,transporte,servicios,salud,entretenimiento,ropa,educacion,salario,negocio,inversion,prestamo,ahorro,otro' +
+    '\n\nReglas de cuenta:' +
+    '\n- tarjeta/card/crédito/débito/visa/mastercard → account:tarjeta' +
+    '\n- banco/transfer/deposito/cheque/BHD/BanReservas/Popular/Scotiabank → account:banco' +
+    '\n- efectivo/cash/billetes/físico → account:efectivo (default)' +
+    '\n\nReglas de tipo — INGRESOS (type:ingreso):' +
+    '\n- recibí, cobré, me pagaron, me depositaron, me cayó, me entraron, vendí, gané, quincena, sueldo, salario, bono, comisión, venta, ingresé' +
+    '\n- Ejemplos: "me depositaron la quincena 18000", "cobré un trabajo 5000", "vendí unas cosas 2500", "me cayeron 800 pesos"' +
+    '\n\nReglas de tipo — GASTOS (type:egreso):' +
+    '\n- gasté, pagué, compré, se me fue, di, metí, eché, saqué, debe, debo, costó, me costó' +
+    '\n- Ejemplos: "eché gasolina 800", "metí 500 al colmado", "pagué la luz 1200", "di 200 de propina", "debo 1500 en la bodega"' +
+    '\n- "debo en X" o "le debo a X" → type:egreso (deuda/gasto)' +
+    '\n\nCategorías dominicanas:' +
+    '\n- colmado/bodega/supermercado/mercado/La Sirena/Nacional → comida' +
+    '\n- gasolina/combustible/motoconcho/guagua/Uber/OMSA → transporte' +
+    '\n- luz/agua/internet/Claro/Altice/Viva/Netflix/cable → servicios' +
+    '\n- médico/farmacia/clínica/salud/medicina/colesterol → salud' +
+    '\n- quincena/sueldo/nómina/salario/bono → salario' +
+    '\n- chicharrón/negocio/venta/cliente → negocio' +
+    '\n\nComandos:' +
+    '\n- resumen/balance/cómo voy/cuánto tengo/mis gastos/hoy → cmd:resumen' +
+    '\n- cuentas/mis cuentas → cmd:ver_cuentas' +
+    '\n- historial/últimos/movimientos → cmd:historial' +
+    '\n- ayuda/help/qué puedes hacer → cmd:ayuda' +
+    '\n- presupuesto/límite → cmd:presupuesto' +
+    '\n- clientes → cmd:clientes' +
+    '\n- ccobrar/cxc/cobrar → cmd:ccobrar' +
+    '\n- cpagar/cxp/pagar → cmd:cpagar' +
+    '\n- alertas → cmd:alertas' +
+    '\n- plan/cuentas contables → cmd:plan' +
+    '\n- agregarcliente → cmd:agregarcliente' +
+    '\n- agregarproveedor → cmd:agregarproveedor' +
+    '\n- presupuesto X 500 → cmd:set_budget,budget_cat:X,budget_amount:500' +
+    '\n- sí/si/dale/correcto/exacto/ok/yes → cmd:confirmar' +
+    '\n- no/cancela/para/cancel → cmd:cancelar';
   try {
     const r = await axios.post(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${GEMINI_API_KEY}`,
@@ -369,31 +380,39 @@ async function parseWithAI(message) {
 
 // ─── FALLBACK PARSER ──────────────────────────────────────────────────────────
 const CAT_KW = {
-  comida         :['comida','almuerzo','desayuno','cena','restaurant','mercado','colmado','pizza','pollo','supermercado','grocery','lunch','dinner','food'],
-  transporte     :['transporte','gas','gasolina','taxi','uber','carro','bus','car','fuel','metro','transport'],
-  servicios      :['luz','agua','internet','telefono','phone','netflix','spotify','cable','electric','water','service'],
-  salud          :['salud','medico','doctor','farmacia','pharmacy','medicina','hospital','dentista','health'],
-  entretenimiento:['entretenimiento','cine','movie','fiesta','party','bar','viaje','hotel','travel','entertainment'],
-  ropa           :['ropa','zapatos','shoes','camisa','shirt','tienda','store','clothes'],
-  educacion      :['escuela','universidad','libro','book','curso','course','school','education'],
-  salario        :['sueldo','quincena','nomina','payroll','salary'],
-  negocio        :['negocio','venta','sale','cliente','client','business'],
+  comida         :['comida','almuerzo','desayuno','cena','restaurant','mercado','colmado','pizza','pollo','supermercado','grocery','lunch','dinner','food','bodega','sirena','nacional','fritura','empanada','chimichurri'],
+  transporte     :['transporte','gas','gasolina','combustible','taxi','uber','carro','bus','car','fuel','metro','transport','motoconcho','guagua','omsa','peaje'],
+  servicios      :['luz','agua','internet','telefono','phone','netflix','spotify','cable','electric','water','service','claro','altice','viva','edesur','edenorte','edeeste'],
+  salud          :['salud','medico','doctor','farmacia','pharmacy','medicina','hospital','dentista','health','clinica','pastilla','consulta'],
+  entretenimiento:['entretenimiento','cine','movie','fiesta','party','bar','viaje','hotel','travel','entertainment','trago','disco'],
+  ropa           :['ropa','zapatos','shoes','camisa','shirt','tienda','store','clothes','tenis','polo'],
+  educacion      :['escuela','universidad','libro','book','curso','course','school','education','colegio','taller'],
+  salario        :['sueldo','quincena','nomina','payroll','salary','bono','comision'],
+  negocio        :['negocio','venta','sale','cliente','client','business','chicharron','producto'],
   ahorro         :['ahorro','fondo','savings'],
-  prestamo       :['prestamo','deuda','loan','debt'],
+  prestamo       :['prestamo','deuda','loan','debt','prestado'],
 };
-const INC_VERBS = ['ingresé','ingrese','recibí','recibi','gané','gane','cobré','cobre',
-                   'deposité','deposite','quincena','sueldo','salario','recibido','vendí','vendi',
-                   'received','earned','deposited','salary','sold'];
-const EXP_VERBS = ['gasté','gaste','pagué','pague','compré','compre',
-                   'spent','paid','bought','compra','gasto','costo','pagar'];
+const INC_VERBS = [
+  'ingresé','ingrese','recibí','recibi','gané','gane','cobré','cobre',
+  'deposité','deposite','quincena','sueldo','salario','recibido','vendí','vendi',
+  'received','earned','deposited','salary','sold',
+  'me depositaron','me pagaron','me cayeron','me entraron','me cayó','me cayeron',
+  'cobré','me dieron','me mandaron','me transfirieron',
+];
+const EXP_VERBS = [
+  'gasté','gaste','pagué','pague','compré','compre',
+  'spent','paid','bought','compra','gasto','costo','pagar',
+  'eché','eche','metí','meti','di ','saqué','saque','debo','debo en',
+  'le debo','me costó','me costo','se me fue',
+];
 
 function detectCat(t) {
   for (const [c, kws] of Object.entries(CAT_KW)) if (kws.some(k => t.includes(k))) return c;
   return 'otro';
 }
 function detectAcc(t) {
-  if (['tarjeta','card','credit','credito','debito'].some(k => t.includes(k))) return 'tarjeta';
-  if (['banco','bank','transfer','transferencia','deposito','deposit'].some(k => t.includes(k))) return 'banco';
+  if (['tarjeta','card','credit','credito','debito','visa','mastercard'].some(k => t.includes(k))) return 'tarjeta';
+  if (['banco','bank','transfer','transferencia','deposito','deposit','bhd','banreservas','popular','scotiabank','cheque'].some(k => t.includes(k))) return 'banco';
   return 'efectivo';
 }
 
@@ -401,11 +420,13 @@ function fallbackParse(msg) {
   const t = msg.trim().toLowerCase().replace(/^\//, '');
   const CMDS = {
     resumen:'resumen', balance:'resumen', summary:'resumen', hoy:'resumen',
+    'como voy':'resumen', 'cómo voy':'resumen', 'cuanto tengo':'resumen', 'cuánto tengo':'resumen',
+    'mis gastos':'resumen', 'ver resumen':'resumen', 'ver balance':'resumen',
     alertas:'alertas', alerts:'alertas',
-    ayuda:'ayuda', help:'ayuda', start:'ayuda',
-    'ver cuentas':'ver_cuentas', cuentas:'ver_cuentas', accounts:'ver_cuentas',
-    presupuesto:'presupuesto', budget:'presupuesto',
-    historial:'historial', history:'historial',
+    ayuda:'ayuda', help:'ayuda', start:'ayuda', 'que puedes':'ayuda', 'qué puedes':'ayuda',
+    'ver cuentas':'ver_cuentas', cuentas:'ver_cuentas', accounts:'ver_cuentas', 'mis cuentas':'ver_cuentas',
+    presupuesto:'presupuesto', budget:'presupuesto', limite:'presupuesto', 'límite':'presupuesto',
+    historial:'historial', history:'historial', ultimos:'historial', 'últimos':'historial', movimientos:'historial',
     miid:'miid',
     plan:'plan', ver_plan:'plan',
     clientes:'clientes',
@@ -415,7 +436,8 @@ function fallbackParse(msg) {
     setpassword:'setpassword', linkaccount:'linkaccount',
     nuevacobranza:'nuevacobranza', registrarpago:'registrarpago', nuevacuenta:'nuevacuenta',
     si:'confirmar', 'sí':'confirmar', yes:'confirmar', confirm:'confirmar',
-    no:'cancelar', cancel:'cancelar',
+    dale:'confirmar', correcto:'confirmar', exacto:'confirmar', ok:'confirmar', va:'confirmar',
+    no:'cancelar', cancel:'cancelar', cancela:'cancelar', para:'cancelar', 'para eso':'cancelar',
   };
   if (CMDS[t]) return { type:'comando', cmd:CMDS[t] };
   // Match commands with args (e.g. "setpassword user pass")
