@@ -1018,51 +1018,6 @@ async function cmdAlertasStock(chatId) {
   await sendMessage(chatId, msg);
 }
 
-// ─── WEEKLY SUMMARY SCHEDULER ─────────────────────────────────────────────────
-async function sendWeeklySummaries() {
-  const now   = new Date();
-  const month = now.getMonth();
-  const year  = now.getFullYear();
-
-  const usersRes = await query('SELECT id,lang FROM users');
-  let sent = 0;
-  for (const user of usersRes.rows) {
-    try {
-      const txs = await getMonthTxs(user.id, month, year);
-      if (!txs.length) continue;
-      const inc   = txs.filter(t=>t.type==='ingreso').reduce((s,t)=>s+parseFloat(t.amount),0);
-      const exp   = txs.filter(t=>t.type==='egreso').reduce((s,t) =>s+parseFloat(t.amount),0);
-      const bal   = inc - exp;
-      const byCat = {};
-      txs.filter(t=>t.type==='egreso').forEach(t=>{ byCat[t.category]=(byCat[t.category]||0)+parseFloat(t.amount); });
-      const top3 = Object.entries(byCat).sort((a,b)=>b[1]-a[1]).slice(0,3)
-        .map(([cat,amt])=>`  ${CAT_EMOJI[cat]||'📦'} ${cat}: ${fmt(amt)}`).join('\n');
-      const lang  = user.lang || 'es';
-      const MN    = lang==='es' ? MONTHS_ES : MONTHS_EN;
-      const msg = lang==='es'
-        ? `📊 *Resumen Semanal — ${MN[month]} ${year}*\n\n▲ Ingresos: *${fmt(inc)}*\n▼ Egresos: *${fmt(exp)}*\n${bal>=0?'✅':'🚨'} Balance: *${fmt(bal)}*\n\n🏆 *Top gastos:*\n${top3||'  Sin gastos'}\n\n_${txs.length} movimiento(s) este mes_`
-        : `📊 *Weekly Summary — ${MN[month]} ${year}*\n\n▲ Income: *${fmt(inc)}*\n▼ Expenses: *${fmt(exp)}*\n${bal>=0?'✅':'🚨'} Balance: *${fmt(bal)}*\n\n🏆 *Top expenses:*\n${top3||'  No expenses'}\n\n_${txs.length} transaction(s) this month_`;
-      await bot.sendMessage(user.id, msg, { parse_mode:'Markdown' });
-      sent++;
-      await new Promise(r=>setTimeout(r,100));
-    } catch(e) { console.error(`Weekly summary error for ${user.id}:`, e.message); }
-  }
-  console.log(`📊 Weekly summaries sent: ${sent}`);
-}
-
-function startWeeklyScheduler() {
-  let lastSent = 0;
-  setInterval(async () => {
-    const now   = new Date();
-    const rdNow = new Date(now.toLocaleString('en-US', { timeZone:'America/Santo_Domingo' }));
-    if (rdNow.getDay()===1 && rdNow.getHours()===8 && rdNow.getMinutes()<2) {
-      if (Date.now() - lastSent > 60 * 60 * 1000) { // evitar doble envío
-        lastSent = Date.now();
-        await sendWeeklySummaries().catch(console.error);
-      }
-    }
-  }, 60 * 1000);
-}
 
 // ─── OAUTH HANDLER ────────────────────────────────────────────────────────────
 async function handleOAuthStart(chatId, authToken) {
@@ -1139,7 +1094,6 @@ bot.on('message', async (msg) => {
 bot.on('polling_error', err => console.error('Polling error:', err.message));
 
 // ─── START ────────────────────────────────────────────────────────────────────
-startWeeklyScheduler();
 console.log('✅ MisCuentas Bot iniciado (polling)');
 console.log(`   API:         ${MISCUENTAS_API}`);
 console.log(`   DB:          ${DATABASE_URL ? '✓ conectada' : '✗ no configurada'}`);
