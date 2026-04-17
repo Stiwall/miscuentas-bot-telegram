@@ -259,10 +259,10 @@ const MSG = {
 ━━━━━ 💰 FINANZAS PERSONALES ━━━━━
 
 📊 *Consultas:*
-• resumen — Balance del mes
-• cuentas — Por cuenta (efectivo/banco/tarjeta)
-• alertas — Alertas financieras
-• historial — Últimos movimientos
+• resumen o /r — Balance del mes
+• cuentas o /c — Por cuenta (efectivo/banco/tarjeta)
+• alertas o /a — Alertas financieras
+• historial o /h — Últimos movimientos
 • presupuesto — Ver límites de gastos
 
 📝 *Registrar:*
@@ -609,6 +609,25 @@ async function handleText(msgText, chatId) {
     await insertTx(tx);
     await clearPending(id);
     await sendMessage(chatId, MSG.recorded(tx, lang));
+    // #6 — Resumen proactivo de la categoría si es un egreso
+    if (tx.type === 'egreso' && tx.category && tx.category !== 'otro') {
+      try {
+        const catTxs = await query(
+          `SELECT COALESCE(SUM(amount),0) as total FROM transactions
+           WHERE user_id=$1 AND type='egreso' AND category=$2
+             AND EXTRACT(MONTH FROM tx_date)=$3 AND EXTRACT(YEAR FROM tx_date)=$4`,
+          [id, tx.category, now.getMonth()+1, now.getFullYear()]
+        );
+        const catTotal = parseFloat(catTxs.rows[0].total);
+        const catE = CAT_EMOJI[tx.category] || '📦';
+        if (catTotal > parseFloat(tx.amount)) {
+          await sendMessage(chatId, lang === 'es'
+            ? `_Este mes llevas RD$ ${fmt(catTotal)} en ${catE} ${tx.category}_`
+            : `_This month you've spent ${fmt(catTotal)} on ${catE} ${tx.category}_`
+          );
+        }
+      } catch { /* no interrumpir el flujo */ }
+    }
     return;
   }
 
@@ -1020,7 +1039,7 @@ async function handleText(msgText, chatId) {
       `SELECT r.*,c.name as client_name FROM receivables r JOIN clients c ON c.id=r.client_id
        WHERE r.id=$1 AND r.user_id=$2`, [parsed.receivable_id, id]
     );
-    if (!rec.rows[0]) { await sendMessage(chatId, 'No encontré esa cobranza. Usa /ccobrar para ver los IDs.')); return; }
+    if (!rec.rows[0]) { await sendMessage(chatId, 'No encontré esa cobranza. Usa /ccobrar para ver los IDs.'); return; }
     try {
       await query(`INSERT INTO receivable_payments(id,receivable_id,amount) VALUES($1,$2,$3)`,
         [`rpay_${Date.now()}`, parsed.receivable_id, parsed.amount]);
@@ -1283,12 +1302,19 @@ bot.on('message', async (msg) => {
       await sendMessage(chatId, MSG.welcome(String(chatId), lang)); return;
     }
 
+    // Comandos cortos (#7)
+    if (/^\/r$/i.test(text))   { await handleText('resumen', chatId); return; }
+    if (/^\/c$/i.test(text))   { await handleText('cuentas', chatId); return; }
+    if (/^\/h$/i.test(text))   { await handleText('historial', chatId); return; }
+    if (/^\/a$/i.test(text))   { await handleText('alertas', chatId); return; }
+    if (/^\/p$/i.test(text))   { await handleText('plan', chatId); return; }
+
     // Comandos de negocio
-    if (/^\/reportes/i.test(text))      { await cmdReportes(chatId, text.replace(/^\/reportes\s*/i,'')); return; }
-    if (/^\/balance$/i.test(text))       { await cmdReportes(chatId, 'balance'); return; }
-    if (/^\/monitoreo$/i.test(text))     { await cmdMonitoreo(chatId); return; }
-    if (/^\/productos$/i.test(text))     { await cmdProductos(chatId); return; }
-    if (/^\/entrada/i.test(text))        { await cmdEntrada(chatId, text.replace(/^\/entrada\s*/i,'')); return; }
+    if (/^\/reportes/i.test(text))        { await cmdReportes(chatId, text.replace(/^\/reportes\s*/i,'')); return; }
+    if (/^\/balance$/i.test(text))         { await cmdReportes(chatId, 'balance'); return; }
+    if (/^\/monitoreo$/i.test(text))       { await cmdMonitoreo(chatId); return; }
+    if (/^\/productos$/i.test(text))       { await cmdProductos(chatId); return; }
+    if (/^\/entrada/i.test(text))          { await cmdEntrada(chatId, text.replace(/^\/entrada\s*/i,'')); return; }
     if (/^\/alertas\s+stock$/i.test(text)) { await cmdAlertasStock(chatId); return; }
 
     // Comandos contabilidad (via handleText)
