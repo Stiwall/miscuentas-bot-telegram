@@ -519,6 +519,12 @@ async function handleText(msgText, chatId) {
     await ensureUser(id, lang);
     user = { id, lang };
     await sendMessage(chatId, MSG.welcome(id, lang));
+    // Segundo mensaje: guía de primer paso
+    await new Promise(r => setTimeout(r, 1200));
+    await sendMessage(chatId, lang === 'es'
+      ? `Para empezar, dime cuál aplica:\n\n*1️⃣ Ya tengo cuenta en miscuentas.app*\nEscribe: \`/login tuusuario tucontraseña\`\n\n*2️⃣ Soy nuevo, quiero crear mi cuenta*\nEscribe: \`/login tuusuario tucontraseña\`\n_(yo creo la cuenta automáticamente)_\n\n*3️⃣ Solo quiero anotar gastos por aquí*\nDime algo como: _"gasté 200 en comida"_`
+      : `To get started:\n\n*1️⃣ I already have an account*\nType: \`/login username password\`\n\n*2️⃣ I'm new here*\nType: \`/login username password\`\n_(I'll create your account automatically)_\n\n*3️⃣ Just track expenses here*\nTell me: _"spent 50 on food"_`
+    );
     return;
   }
   const lang = user.lang || 'es';
@@ -559,7 +565,19 @@ async function handleText(msgText, chatId) {
         await query(`DELETE FROM users WHERE id=$1`, [id]);
       }
       await clearPending(id);
-      await sendMessage(chatId, `✅ *¡Bienvenido de vuelta!*\n\n👤 *${username}*\n\nYa puedes usar la web.`);
+      await sendMessage(chatId, `¡Bienvenido de vuelta, *${username}*! 👋\n\nYa estás conectado. Puedes usar todos los comandos y la web.`);
+      // Mostrar resumen del mes al vincularse
+      const _now = new Date();
+      const _txs = await query(
+        `SELECT type, amount FROM transactions WHERE user_id=$1 AND EXTRACT(MONTH FROM tx_date)=$2 AND EXTRACT(YEAR FROM tx_date)=$3`,
+        [webUserId, _now.getMonth()+1, _now.getFullYear()]
+      );
+      if (_txs.rows.length > 0) {
+        const _inc = _txs.rows.filter(t=>t.type==='ingreso').reduce((s,t)=>s+parseFloat(t.amount),0);
+        const _exp = _txs.rows.filter(t=>t.type==='egreso').reduce((s,t)=>s+parseFloat(t.amount),0);
+        await new Promise(r => setTimeout(r, 800));
+        await sendMessage(chatId, `📊 *Tu mes hasta ahora:*\n\n▲ Ingresos: RD$ ${fmt(_inc)}\n▼ Egresos: RD$ ${fmt(_exp)}\n\n${(_inc-_exp)>=0?'✅':'🚨'} Balance: RD$ ${fmt(_inc-_exp)}\n_${_txs.rows.length} movimiento(s)_`);
+      }
     } else {
       const myCred = await query('SELECT username FROM user_credentials WHERE user_id=$1', [id]);
       if (myCred.rows[0]) {
